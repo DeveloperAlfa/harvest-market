@@ -10,7 +10,7 @@ Play the Harvest Market card game with friends in the browser, phone or laptop. 
 - **Tabs:** Farm (plots, barn, sack prices), Mandi (water, fertilizer, Bank), Deals (offer board, with a badge when something waits for you) and Village (neighbours, "Offer a deal"). A bottom tab bar on phones.
 - **Bots that trade:** they sell spare plots (to farmers first, the Bank if they must), bid on good plots when rich, offer coins for IOUs as Moneylenders, and answer offers within a few seconds, with a word in chat.
 - **First-time tour:** a 10-step guided tour on the first game; the ? button replays it.
-- **Rules:** the tabletop edition, as tuned with 1,000 simulated games: crop prices, fertilizer per barrel, dues that rise with the water price, Boom at 200.
+- **Rules:** the tabletop edition, rebalanced online from thousands of simulated bot games (see *Balance* below).
 
 ## Run it on your laptop
 
@@ -34,6 +34,21 @@ Nothing here needs a paid service: no database, no accounts, no API keys. Games 
 | Fly.io / Railway | Usually needs a card or trial credit | Later, when it grows | Not needed for a friends prototype. |
 
 A custom domain (optional) is the only thing you might pay for, typically a few hundred rupees a year.
+
+## Balance
+
+Prices were tuned so every crop stays worth planting all game and no starting crop is favoured. In 2,000 simulated bot games per mode:
+
+| | Full · 35 rounds | Short · 25 rounds |
+|---|---|---|
+| Win rate by starting crop (Ragi, Rice, Turmeric, Cotton, Sugarcane) | 26 / 27 / 26 / 24 / 21% | 28 / 27 / 27 / 24 / 20% |
+| Fields still planted in the last third, by crop | 65–71% | 61–69% |
+| Farmers going broke per game | 1.2 | 1.2 |
+
+- Starting coins 30. Water 3, 4, 4, 5, 6, 6, 7 across the seven seasons; fertilizer is water + 2 per bag; every sack gains +1 per season.
+- Crop tracks: Ragi 7–10, Rice 11–15, Turmeric 9–17, Cotton 12–22, Sugarcane 14–28 (middle 9 / 13 / 13 / 17 / 21).
+- Boom at 350 coins.
+- The short game runs through all seven seasons, about 3½ rounds each, instead of skipping the first ten rounds.
 
 ## How it's built
 

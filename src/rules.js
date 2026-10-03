@@ -2,20 +2,20 @@
 "use strict";
 
 const CROPS = [
-  { id: "ragi", name: "Ragi", water: 2, track: [6, 7, 7, 8, 8, 9, 9], move: 0.25 },
-  { id: "rice", name: "Rice", water: 3, track: [10, 10, 11, 12, 13, 14, 14], move: 0.35 },
-  { id: "turmeric", name: "Turmeric", water: 3, track: [8, 10, 11, 12, 13, 14, 16], move: 0.5 },
-  { id: "cotton", name: "Cotton", water: 4, track: [10, 12, 13, 15, 17, 18, 20], move: 0.7 },
-  { id: "sugarcane", name: "Sugarcane", water: 5, track: [11, 14, 16, 18, 20, 22, 25], move: 0.8 },
+  { id: "ragi", name: "Ragi", water: 2, track: [7, 8, 8, 9, 9, 10, 10], move: 0.25 },
+  { id: "rice", name: "Rice", water: 3, track: [11, 11, 12, 13, 14, 15, 15], move: 0.35 },
+  { id: "turmeric", name: "Turmeric", water: 3, track: [9, 11, 12, 13, 14, 15, 17], move: 0.5 },
+  { id: "cotton", name: "Cotton", water: 4, track: [12, 14, 15, 17, 19, 20, 22], move: 0.7 },
+  { id: "sugarcane", name: "Sugarcane", water: 5, track: [14, 17, 19, 21, 23, 25, 28], move: 0.8 },
 ];
 const CROP = Object.fromEntries(CROPS.map(c => [c.id, c]));
 
 const R = {
-  START_CASH: 20,
+  START_CASH: 30,
   START_PLOTS: 3,
   ROUNDS: 35,
   ROUNDS_PER_PERIOD: 5,
-  BOOM_AT: 200,
+  BOOM_AT: 350,
   LOAN_SIZE: 20,
   LOAN_INTEREST: 2,
   IDLE_UPKEEP: 1,
@@ -25,18 +25,19 @@ const R = {
   DEAL_FEE: 1,
   MONEYLENDER_PURSE: 15,
   // per Price Period (1..7)
-  WATER: [2, 3, 4, 5, 6, 7, 8],
-  FERT: [4, 5, 6, 7, 8, 9, 10],      // price per bag
-  BONUS: [0, 0, 1, 1, 2, 3, 3],
+  WATER: [3, 4, 4, 5, 6, 6, 7],
+  FERT: [5, 6, 6, 7, 8, 8, 9],       // price per bag (water price + 2)
+  BONUS: [0, 1, 2, 3, 4, 5, 6],     // added to every sack price, one step per season
   LAND_X: 4,           // Bank buys a plot for LAND_X x water
   FERT_PER_BARREL: true,  // if true: fertilizing a plot takes one bag per barrel of water it needs
   UPKEEP_SCALES: true,  // if true: idle = water price, warehouse = water price + 1
 };
 
-const period = r => Math.min(7, Math.floor((r - 1) / R.ROUNDS_PER_PERIOD) + 1);
+// Seven price seasons spread over the game: 5 rounds each in the 35-round game, about 3½ in the 25-round game.
+const period = (r, rounds = R.ROUNDS) => Math.min(7, Math.floor((r - 1) * 7 / rounds) + 1);
 
-function prices(round, drought) {
-  const k = period(round), w = R.WATER[k - 1], f = R.FERT[k - 1];
+function prices(round, drought, rounds = R.ROUNDS) {
+  const k = period(round, rounds), w = R.WATER[k - 1], f = R.FERT[k - 1];
   return {
     period: k,
     water: drought ? 4 * w : w,

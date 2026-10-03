@@ -22,7 +22,7 @@ function plantProfit(game, cropId) {
   return sack * 1.2 * (fert ? 2 : 1) - (fert ? bags * pr.fert : 0) - c.water * pr.waterNormal + idleDues(game);
 }
 function plotValue(game, cropId) {
-  const pr = game.prices, left = Math.max(1, R.ROUNDS - game.round);
+  const pr = game.prices, left = Math.max(1, (game.rounds || R.ROUNDS) - game.round);
   return Math.max(pr.land, Math.round(Math.min(HORIZON, left) * Math.max(0, plantProfit(game, cropId) - pr.waterNormal * 0.3)));
 }
 function bundleValue(game, b, mine) {

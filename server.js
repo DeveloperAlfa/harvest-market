@@ -255,7 +255,7 @@ function handle(ws, msg) {
       if (!isHost) return fail("Only the host can start.");
       if (room.game) return fail("Already started.");
       if (room.members.length < 2) return fail("Add at least one more player or bot.");
-      room.game = new Game({ seed: crypto.randomInt(2 ** 31), start: msg.start === 11 ? 11 : 1,
+      room.game = new Game({ seed: crypto.randomInt(2 ** 31), rounds: msg.rounds === 25 || msg.start === 11 ? 25 : 35,
         players: room.members.map(m => ({ id: m.id, name: m.name, bot: m.bot })) });
       startRound(room);
       return broadcast(room);

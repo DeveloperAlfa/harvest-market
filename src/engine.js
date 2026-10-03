@@ -8,12 +8,13 @@ const ITEMS = ["water", "fert"];
 const int = v => Number.isInteger(v) ? v : NaN;
 
 class Game {
-  constructor({ seed = Date.now(), players, start = 1 }) {
+  constructor({ seed = Date.now(), players, rounds = R.ROUNDS, start }) {
     if (!players || players.length < 2 || players.length > 5) throw new Error("A game needs 2 to 5 players");
     this.seed = seed >>> 0;
     this.rand = rng(this.seed);
-    this.round = start;
-    this.startRound = start;
+    this.rounds = start === 11 ? 25 : rounds;   // 35 (full) or 25 (short); `start: 11` is the old way to ask for short
+    this.round = 1;
+    this.startRound = 1;
     this.pos = Object.fromEntries(CROPS.map(c => [c.id, 3]));
     this.deck = [];
     this.lastDrought = false;
@@ -37,7 +38,7 @@ class Game {
   }
 
   // ------------------------------------------------------------------ helpers
-  get prices() { return prices(this.round, this.weather.drought); }
+  get prices() { return prices(this.round, this.weather.drought, this.rounds); }
   player(id) { return this.players.find(p => p.id === id); }
   farmers() { return this.players.filter(p => p.status === "farmer"); }
   say(kind, text, who) { this.log.push({ round: this.round, kind, text, who: who || null, t: Date.now() }); if (this.log.length > 500) this.log.shift(); }
@@ -320,8 +321,8 @@ class Game {
     const lastLand = pr.land, lastBuyW = pr.buyWater, lastBuyF = pr.buyFert;
     this.round += boom ? 2 : 1;
     if (boom) this.say("boom", `Boom! Someone has ${R.BOOM_AT}+ coins, so a round is skipped.`);
-    if (this.round > R.ROUNDS || this.farmers().length <= 1) {
-      this.round = Math.min(this.round, R.ROUNDS);
+    if (this.round > this.rounds || this.farmers().length <= 1) {
+      this.round = Math.min(this.round, this.rounds);
       return this._end(lastLand, lastBuyW, lastBuyF);
     }
     this.lastDrought = this.weather.drought;
@@ -358,7 +359,7 @@ class Game {
 
   view() {
     return {
-      seed: this.seed, round: this.round, phase: this.phase, weather: this.weather, lastDrought: this.lastDrought,
+      seed: this.seed, round: this.round, rounds: this.rounds, phase: this.phase, weather: this.weather, lastDrought: this.lastDrought,
       prices: this.prices, pos: this.pos, deckLeft: this.deck.length, lastHarvest: this.lastHarvest,
       players: this.players, offers: this.offers, ious: this.ious, log: this.log.slice(-150), results: this.results,
       crops: CROPS, rules: R,

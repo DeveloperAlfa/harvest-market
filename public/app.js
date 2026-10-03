@@ -125,9 +125,13 @@
     const g = G(), p = me(), pr = g.prices, d = dues(), dry = g.weather.drought;
     // sky
     $("sky").classList.toggle("dry", dry);
-    $("skyArt").innerHTML = `<div class="sunball"></div>` + (dry ? "" : `<div class="cloud" style="top:14px;width:70px;left:8%"></div><div class="cloud" style="top:38px;width:54px;left:60%;animation-delay:-18s"></div>`);
+    // redraw the sky only when the weather changes, so the clouds keep drifting instead of restarting
+    if ($("skyArt").dataset.dry !== String(dry)) {
+      $("skyArt").dataset.dry = String(dry);
+      $("skyArt").innerHTML = `<div class="sunball"></div>` + (dry ? "" : `<div class="cloud" style="top:14px;width:70px;animation-delay:-8s"></div><div class="cloud" style="top:38px;width:54px;animation-delay:-28s"></div>`);
+    }
     $("roundNum").textContent = g.round;
-    $("roundOf").textContent = `of ${g.rules.ROUNDS} · season ${pr.period}`;
+    $("roundOf").textContent = `of ${g.rounds || g.rules.ROUNDS} · season ${pr.period}`;
     $("weatherWord").textContent = dry ? `Drought! Water costs ${pr.water}` : (g.lastDrought ? "The rains are back" : "Good weather");
     renderTurn();
 
@@ -484,7 +488,7 @@
   $("turnSel").onchange = () => send({ t: "settings", turnSecs: +$("turnSel").value });
   $("reportClose").onclick = () => { $("report").hidden = true; };
   $("report").onclick = e => { if (e.target === $("report")) $("report").hidden = true; };
-  $("startBtn").onclick = () => send({ t: "start", start: +$("lengthSel").value });
+  $("startBtn").onclick = () => send({ t: "start", rounds: +$("lengthSel").value });
   const leave = () => { send({ t: "leave" }); store.del("hm-token"); };
   $("leaveLobby").onclick = leave; $("leaveGame").onclick = leave; $("backHome").onclick = leave;
   $("readyBtn").onclick = () => { const p = me(); if (p) { act({ type: "ready", value: !p.ready }); if (p.ready) step = 1; } };

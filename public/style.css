@@ -101,7 +101,7 @@ input, select { font: inherit; color: var(--ink); background: var(--white); bord
 .cloud::before { width: 26px; height: 26px; left: 10px; top: -12px; } .cloud::after { width: 20px; height: 20px; left: 30px; top: -8px; }
 .sunball { position: absolute; width: 46px; height: 46px; border-radius: 50%; background: #FFD45A; left: 8px; top: -18px; box-shadow: 0 0 0 10px rgba(255,212,90,.3); opacity: .9; }
 .dry .sunball { background: #FF8A1F; box-shadow: 0 0 0 14px rgba(255,138,31,.35), 0 0 0 28px rgba(255,138,31,.15); }
-@media (prefers-reduced-motion: no-preference) { .cloud { animation: drift 40s linear infinite; } @keyframes drift { from { transform: translateX(-60px); } to { transform: translateX(110vw); } } }
+@media (prefers-reduced-motion: no-preference) { .cloud { left: 0; animation: drift 60s linear infinite; } @keyframes drift { from { transform: translateX(-90px); } to { transform: translateX(105vw); } } }
 
 /* -------------------------------------------------- tabs + panes */
 .tabs { display: grid; grid-template-columns: repeat(4, 1fr); background: var(--white); border-bottom: 3px solid var(--ink); position: sticky; top: var(--sky-h, 0px); z-index: 29; }
