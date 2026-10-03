@@ -87,4 +87,22 @@ test("bots think before moving, and the round timer brings the harvest in", asyn
   a.ws.close();
 });
 
+test("a bot answers an offer made to it by name", async () => {
+  const a = client(); await a.open;
+  a.send({ t: "create", name: "Seller" });
+  await a.until(x => x.state && x.state.room);
+  a.send({ t: "addBot" });
+  await a.until(x => x.state.room.members.length === 2);
+  a.send({ t: "start" });
+  await a.until(x => x.state.game && x.state.clock && x.state.clock.thinking.length === 0);
+  const bot = a.state.room.members.find(m => m.bot).id;
+  // a silly-cheap offer the bot should take: 5 water for 1 coin
+  a.send({ t: "act", a: { type: "takeLoan" } }); a.send({ t: "act", a: { type: "takeLoan" } });   // drought-proof
+  a.send({ t: "act", a: { type: "bankBuy", item: "water", qty: 5 } });
+  a.send({ t: "act", a: { type: "offer", to: bot, give: { water: 5 }, get: { coins: 1 } } });
+  await a.until(x => x.state.game.log.some(l => l.kind === "deal"));
+  await a.until(x => x.state.game.log.some(l => l.kind === "chat" && l.who === bot));
+  a.ws.close();
+});
+
 test.after(() => { server.close(); setTimeout(() => process.exit(process.exitCode || 0), 50).unref(); });

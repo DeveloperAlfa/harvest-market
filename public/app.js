@@ -10,7 +10,12 @@
   let ws, S = { you: null, room: null, game: null }, retry = 0;
   let openPlot = null, sellConfirm = false, chatOpen = false, seenLog = 0, lastPopRound = null, confirmEnd = false;
   const qty = { w: 1, f: 1 };
-  let deadlineAt = null;
+  let deadlineAt = null, tab = "farm";
+  function goTab(t) {
+    tab = t;
+    document.querySelectorAll("[data-pane]").forEach(el => { el.hidden = el.dataset.pane !== t; });
+    document.querySelectorAll("#tabs [data-go]").forEach(b => b.setAttribute("aria-current", b.dataset.go === t ? "page" : "false"));
+  }
   const draft = { give: { coins: 0, water: 0, fert: 0, iou: 0 }, get: { coins: 0, water: 0, fert: 0, iou: 0 } };
 
   // ------------------------------------------------------------- connection
@@ -158,7 +163,7 @@
           if (el) el.insertAdjacentHTML("beforeend", `<span class="pop">+${amt}</span>`);
         }
       }
-      if (g.lastHarvest && prev && prev.game && prev.game.round !== g.round && p.lastRound && p.lastRound.round === prev.game.round) showReport(prev.game.round);
+      if (g.lastHarvest && prev && prev.game && prev.game.round !== g.round && p.lastRound && p.lastRound.round === prev.game.round) { showReport(prev.game.round); goTab("farm"); }
       if (g.lastHarvest) lastPopRound = g.lastHarvest.round;
     }
 
@@ -168,14 +173,24 @@
       const st = x.status !== "farmer" ? `<span class="st out">out</span>` : thinking ? `<span class="st think">thinking<i>.</i><i>.</i><i>.</i></span>` : x.ready ? `<span class="st ok">ready</span>` : `<span class="st">planning</span>`;
       return `<div class="nb"><div class="top"><span class="face" style="background:${faceOf(x.id)}">${esc(x.name[0])}</span><span class="nm">${esc(x.name)}</span>${st}</div>
         <div class="minis">${x.plots.map(pl => plotSvg(pl, { drought: dry })).join("") || '<span class="nums">no land</span>'}</div>
-        <div class="nums">${x.cash} coins · ${x.water} water · ${x.fert} bags${x.loans ? ` · ${x.loans} loans` : ""}</div></div>`;
+        <div class="nums">${x.cash} coins · ${x.water} water · ${x.fert} bags${x.loans ? ` · ${x.loans} loans` : ""}</div>
+        ${p && (p.status === "farmer" || x.status === "farmer") ? `<button class="btn ghost small-btn" data-offer-to="${x.id}">Offer ${esc(x.name.split(" ")[0])} a deal</button>` : ""}</div>`;
     }).join("");
 
+    document.querySelectorAll("[data-offer-to]").forEach(b => b.onclick = () => openDeal(b.dataset.offerTo));
     // mandi
     $("pWater").textContent = pr.water; $("pWater").parentElement.classList.toggle("hot", dry);
     $("pBuyWater").textContent = pr.buyWater; $("pFert").textContent = pr.fert; $("pBuyFert").textContent = pr.buyFert;
     $("pLand").textContent = `Buys a plot for ${pr.land}`;
     $("qW").textContent = qty.w; $("qF").textContent = qty.f;
+    if (p) $("miniBarn").innerHTML = `You have <b>${p.cash}</b> coins · <b>${p.water}</b> water · <b>${p.fert}</b> bags · <b>${p.loans}</b> loans`;
+    const forMe = g.offers.filter(o => o.from !== S.you && (o.to === S.you || (o.to == null && p && p.status === "farmer")));
+    $("dealBadge").hidden = !forMe.length; $("dealBadge").textContent = forMe.length;
+    if (prev && prev.game && prev.game.round === g.round) {
+      const old = new Set(prev.game.offers.map(o => o.id));
+      const fresh = g.offers.filter(o => !old.has(o.id) && o.from !== S.you && o.to === S.you);
+      if (fresh.length && tab !== "deals") toast(`${pname(fresh[0].from)} pinned an offer for you. See Deals.`);
+    }
     const h = g.lastHarvest;
     $("cropBoard").innerHTML = g.crops.map(c => {
       const owners = g.players.filter(x => x.plots.some(y => y.crop === c.id)).map(x => x.name);
@@ -250,7 +265,7 @@
     feed.innerHTML = g.log.map(l => {
       if (l.kind === "chat") return `<div class="msg ${l.who === S.you ? "me" : ""}"><small style="color:${faceOf(l.who)}">${esc(pname(l.who))}</small>${esc(l.text)}</div>`;
       const big = ["harvest", "boom", "out", "end", "weather", "deal"].includes(l.kind);
-      return `<div class="event ${big ? "big" : ""}">${l.who ? esc(pname(l.who)) + " " : ""}${esc(l.text)}</div>`;
+      return `<div class="event ${big ? "big" : ""}">${l.who && l.kind !== "deal" ? esc(pname(l.who)) + " " : ""}${esc(l.text)}</div>`;
     }).join("");
     if (atBottom || chatOpen) feed.scrollTop = feed.scrollHeight;
     const unread = g.log.slice(seenLog).filter(l => l.kind === "chat" && l.who !== S.you);
@@ -326,6 +341,8 @@
     el.classList.toggle("low", left < 15000);
   }
   setInterval(tick, 250);
+  // the tab bar sticks just under the sky header on wide screens
+  new ResizeObserver(() => document.documentElement.style.setProperty("--sky-h", $("sky").offsetHeight + "px")).observe($("sky"));
 
   // ------------------------------------------------------------- harvest report
   function showReport(round) {
@@ -350,20 +367,24 @@
 
   // ------------------------------------------------------------- guided tour
   const TOUR = [
-    { sel: "#plots", title: "Your farm", text: "Each plot grows one crop. Tap a plot to plant it. If you're short of water or fertilizer, planting buys what's missing from the mandi. Fields clear after every harvest, so plan them again each round." },
-    { sel: "#barn", title: "Your barn", text: "Coins, water, fertilizer and loans. Goods that aren't planted or kept in a warehouse plot are sold back cheaply at the harvest." },
-    { sel: ".stalls", title: "The mandi", text: "Buy or sell water and fertilizer, and borrow 20 coins from the Bank (2 coins interest a round). Prices rise every 5 rounds, and a drought makes water 4× dearer." },
-    { sel: ".board", title: "Sack prices", text: "What one sack of each crop sells for. A planted plot gives 1 sack, a fertilized one 2. Prices move at each harvest, and a bumper triples one crop." },
-    { sel: ".deals", title: "Deal board", text: "Pin offers to other farmers: coins, water, fertilizer, plots, or an IOU that's paid at the end of the season. Each side pays 1 coin when a deal goes through." },
-    { sel: "#chatFab", title: "Village chaupal", text: "Chat with everyone. Deals, weather and harvest news show up here too." },
-    { sel: ".turn-row", title: "Ready for harvest", text: "When your plans are set, tap Ready. The harvest comes when everyone is ready or the clock runs out. Bots take a few seconds to think." },
-    { sel: null, title: "How to win", text: "Keep farming to the end of the season with the most wealth. If you run out of coins and land you become a moneylender. Tap ? any time to see this again." },
+    { tab: "farm", sel: "#plots", title: "Your farm", text: "Each plot grows one crop. Tap a plot to plant it. If you're short of water or fertilizer, planting buys what's missing. Fields clear after every harvest, so plan them again each round." },
+    { tab: "farm", sel: "#barn", title: "Your barn", text: "Coins, water, fertilizer and loans. Goods that aren't planted or kept in a warehouse plot are sold back cheaply at the harvest." },
+    { tab: "farm", sel: ".board", title: "Sack prices", text: "What one sack of each crop sells for. A planted plot gives 1 sack, a fertilized one 2. Prices move at each harvest, and a bumper triples one crop." },
+    { tab: "mandi", sel: ".stalls", title: "The mandi", text: "Buy or sell water and fertilizer, borrow 20 coins from the Bank (2 a round interest), or sell it a plot. Prices rise every 5 rounds; a drought makes water 4× dearer." },
+    { tab: "deals", sel: ".corkboard", title: "Deal board", text: "Offers between farmers: coins, water, fertilizer, plots, or IOUs paid at the end. Bots bid for land and sell spare plots here, and answer your offers in a few seconds." },
+    { tab: "village", sel: "#neighbours", title: "The village", text: "Everyone's farm and goods at a glance. Tap 'Offer a deal' on a neighbour to make them an offer." },
+    { tab: "farm", sel: "#tabs", title: "Find your way", text: "Switch between Farm, Mandi, Deals and Village here. A number on Deals means an offer is waiting for you." },
+    { tab: "farm", sel: "#chatFab", title: "Village chaupal", text: "Chat with everyone. Deals, weather and harvest news show up here too." },
+    { tab: "farm", sel: ".turn-row", title: "Ready for harvest", text: "When your plans are set, tap Ready. The harvest comes when everyone is ready or the clock runs out." },
+    { tab: "farm", sel: null, title: "How to win", text: "Keep farming to the end of the season with the most wealth. If you run out of coins and land you become a moneylender. Tap ? any time to see this again." },
   ];
   let tourOn = false, tourI = 0;
   function startTour() { tourOn = true; tourI = 0; $("tour").hidden = false; showStep(); }
-  function endTour() { tourOn = false; $("tour").hidden = true; store.set("hm-tour", "done"); }
+  function endTour() { tourOn = false; $("tour").hidden = true; store.set("hm-tour", "done"); goTab("farm"); scrollTo({ top: 0 }); }
   function showStep() {
-    const st = TOUR[tourI], el = st.sel && document.querySelector(st.sel);
+    const st = TOUR[tourI];
+    goTab(st.tab);
+    const el = st.sel && document.querySelector(st.sel);
     $("tourStep").textContent = `${tourI + 1} of ${TOUR.length}`;
     $("tourTitle").textContent = st.title; $("tourText").textContent = st.text;
     $("tourNext").textContent = tourI === TOUR.length - 1 ? "Let's farm" : "Next";
@@ -371,7 +392,7 @@
     const spot = $("tourSpot"), tip = $("tourTip");
     if (!el || !el.offsetParent && getComputedStyle(el).position !== "fixed") { spot.className = "spot none"; tip.className = "tip center"; tip.style.cssText = ""; return; }
     const sticky = $("sky").offsetHeight;
-    if (!["#chatFab", ".turn-row"].includes(st.sel)) { const r0 = el.getBoundingClientRect(); window.scrollBy({ top: r0.top - sticky - 16, behavior: "instant" }); }
+    if (!["#chatFab", ".turn-row", "#tabs"].includes(st.sel)) { const r0 = el.getBoundingClientRect(); window.scrollBy({ top: r0.top - sticky - 16, behavior: "instant" }); }
     requestAnimationFrame(() => {
       const r = el.getBoundingClientRect(), pad = 6, vw = innerWidth, vh = innerHeight;
       spot.className = "spot";
@@ -399,6 +420,7 @@
   $("joinBtn").onclick = () => { const n = $("nameIn").value.trim(), c = $("codeIn").value.trim(); if (!n) return toast("Type your name first."); if (c.length !== 4) return toast("Village codes have 4 letters."); store.set("hm-name", n); send({ t: "join", name: n, code: c }); };
   $("codeIn").oninput = e => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z]/g, ""); };
   $("addBotBtn").onclick = () => send({ t: "addBot" });
+  document.querySelectorAll("#tabs [data-go]").forEach(b => b.onclick = () => { goTab(b.dataset.go); scrollTo({ top: 0 }); });
   $("turnSel").onchange = () => send({ t: "settings", turnSecs: +$("turnSel").value });
   $("reportClose").onclick = () => { $("report").hidden = true; };
   $("report").onclick = e => { if (e.target === $("report")) $("report").hidden = true; };
@@ -412,7 +434,12 @@
   $("loanRepay").onclick = () => act({ type: "repayLoan" });
   $("sheetClose").onclick = () => { openPlot = null; $("sheet").hidden = true; };
   $("sheet").onclick = e => { if (e.target === $("sheet")) { openPlot = null; $("sheet").hidden = true; } };
-  $("newDealBtn").onclick = () => { $("dealSheet").hidden = false; renderDealRows(); renderDealPlots(); };
+  function openDeal(to) {
+    $("dealSheet").hidden = false; renderDealRows();
+    if (to !== undefined) { renderDealPlots(); $("offerTo").value = to; }
+    renderDealPlots();
+  }
+  $("newDealBtn").onclick = () => openDeal();
   $("dealClose").onclick = () => { $("dealSheet").hidden = true; };
   $("dealSheet").onclick = e => { if (e.target === $("dealSheet")) $("dealSheet").hidden = true; };
   $("offerTo").onchange = renderDealPlots;
@@ -422,6 +449,7 @@
     act({ type: "offer", to, give: { ...draft.give, plots: picked("gPlots") }, get: { ...draft.get, plots: to ? picked("wPlots") : [] } });
     for (const s of ["give", "get"]) for (const [k] of FIELDS) draft[s][k] = 0;
     $("dealSheet").hidden = true;
+    goTab("deals");
   };
   $("chatFab").onclick = () => { chatOpen = true; $("chat").hidden = false; $("chatFab").hidden = true; $("bubble").hidden = true; render(); $("chatIn").focus(); };
   $("chatClose").onclick = () => { chatOpen = false; $("chat").hidden = true; $("chatFab").hidden = false; render(); };

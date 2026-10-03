@@ -58,23 +58,32 @@
   </header>
   <div class="curtain" id="curtain" hidden><div class="curtain-card"><div class="sickle" aria-hidden="true"></div><b>The harvest is coming in…</b><span>Counting sacks, settling prices, collecting dues.</span></div></div>
 
-  <div class="layout">
-    <div class="col">
+  <nav class="tabs" id="tabs" aria-label="Game sections">
+    <button data-go="farm" aria-current="page"><span class="ti farm" aria-hidden="true"></span>Farm</button>
+    <button data-go="mandi"><span class="ti mandi" aria-hidden="true"></span>Mandi</button>
+    <button data-go="deals"><span class="ti deals" aria-hidden="true"></span>Deals<i id="dealBadge" hidden></i></button>
+    <button data-go="village"><span class="ti village" aria-hidden="true"></span>Village</button>
+  </nav>
+
+  <main class="panes">
+    <div class="pane farm-pane" data-pane="farm">
       <section class="farm" aria-label="Your farm">
         <div class="farm-head"><h2 id="farmTitle">Your farm</h2><span class="hint small" id="farmHint">Tap a plot to choose what to do with it.</span></div>
         <div class="plots" id="plots"></div>
         <div class="barn" id="barn"></div>
         <p class="warn" id="farmWarn"></p>
       </section>
-      <section class="village" aria-label="Neighbours">
-        <h2>The village</h2>
-        <div class="neighbours" id="neighbours"></div>
-      </section>
+      <div class="board" aria-label="Crop prices">
+        <div class="board-title">Today's sack prices</div>
+        <div id="cropBoard"></div>
+        <div class="board-foot" id="boardFoot"></div>
+      </div>
     </div>
 
-    <div class="col">
+    <div class="pane" data-pane="mandi" hidden>
       <section class="mandi" aria-label="Market">
         <h2>Mandi</h2>
+        <p class="hint">Buy what you need for planting, sell what you won't use, or borrow from the Bank.</p>
         <div class="stalls">
           <div class="stall water"><div class="awning"></div><div class="stall-body">
             <div class="stall-name">Water tank</div>
@@ -98,19 +107,24 @@
             <div class="sell-back" id="pLand">Buys a plot for 8</div>
           </div></div>
         </div>
-        <div class="board" aria-label="Crop prices">
-          <div class="board-title">Today's sack prices</div>
-          <div id="cropBoard"></div>
-          <div class="board-foot" id="boardFoot"></div>
-        </div>
+        <div class="mini-barn" id="miniBarn"></div>
       </section>
+    </div>
 
+    <div class="pane" data-pane="deals" hidden>
       <section class="deals" aria-label="Deals between farmers">
         <div class="deals-head"><h2>Deal board</h2><button class="btn" id="newDealBtn">Pin a deal</button></div>
+        <p class="hint on-grass">Trade coins, water, fertilizer, plots or IOUs with other farmers. Bots answer within a few seconds.</p>
         <div class="corkboard" id="offerList"></div>
         <div class="ious" id="iouList"></div>
       </section>
+    </div>
 
+    <div class="pane" data-pane="village" hidden>
+      <section class="village" aria-label="Neighbours">
+        <h2>The village</h2>
+        <div class="neighbours" id="neighbours"></div>
+      </section>
       <section class="host" id="hostGame" hidden>
         <button class="btn ghost" id="forceBtn">Host: move to the next round now</button>
         <button class="btn ghost" id="endBtn">Host: end the game</button>
@@ -118,7 +132,7 @@
       </section>
       <button class="btn ghost leave" id="leaveGame">Leave the village</button>
     </div>
-  </div>
+  </main>
 
   <!-- chat -->
   <button class="chat-fab" id="chatFab" aria-label="Open chat"><span>Chat</span><i id="chatBadge" hidden></i></button>

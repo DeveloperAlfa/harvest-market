@@ -6,7 +6,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { WebSocketServer } = require("ws");
 const { Game } = require("./src/engine");
-const { playBot } = require("./src/bot");
+const { playBot, wantsOffer } = require("./src/bot");
 
 const PORT = process.env.PORT || 8080;
 const PUBLIC = path.join(__dirname, "public");
@@ -18,6 +18,7 @@ const FAST = process.env.HM_FAST === "1";
 const T = {
   botThink: FAST ? [5, 15] : [2000, 4500],    // before a bot's first move
   botStep: FAST ? [2, 6] : [400, 900],        // between a bot's moves
+  reply: FAST ? [3, 8] : [2000, 5000],        // a bot looking at a new offer
   harvest: FAST ? 20 : 2200,                  // "harvest is coming in" pause before results
   second: FAST ? 5 : 1000,                    // length of a timer second
 };
@@ -117,7 +118,8 @@ function startRound(room) {
       later(room, at, () => {
         if (g.round !== round || room.harvesting) return;
         if (a.type === "ready") room.thinking.delete(m.id);
-        g.act(m.id, a);
+        const before = g.offers.length, r = g.act(m.id, a);
+        if (r.ok && a.type === "offer" && g.offers.length > before) botsConsider(room, g.offers[g.offers.length - 1].id);
         if (a.type === "ready") maybeResolve(room); else broadcast(room);
       });
       at += a.type === "ready" ? 0 : between(T.botStep);
@@ -125,6 +127,28 @@ function startRound(room) {
     if (!moves.some(a => a.type === "ready")) later(room, at, () => { room.thinking.delete(m.id); g.act(m.id, { type: "ready", value: true }); maybeResolve(room); });
   }
 }
+// Bots look at a newly pinned offer after a pause; they answer offers made to them by name.
+const YES = ["Deal!", "Done. Pleasure doing business.", "Shake on it.", "Sold."];
+const NO = ["Not at that price.", "I'll pass.", "Make it sweeter and we'll talk.", "No thanks."];
+const pick = a => a[Math.floor(Math.random() * a.length)];
+function botsConsider(room, offerId) {
+  const g = room.game, o = g.offers.find(x => x.id === offerId);
+  if (!o) return;
+  const round = g.round;
+  for (const m of room.members) if (m.bot && m.id !== o.from && (o.to == null || o.to === m.id)) {
+    later(room, between(T.reply), () => {
+      if (g.round !== round || room.harvesting || g.phase !== "trade") return;
+      const still = g.offers.find(x => x.id === offerId);
+      if (!still) return;
+      const fromBot = (room.members.find(x => x.id === o.from) || {}).bot;
+      if (wantsOffer(g, m.id, still) && g.act(m.id, { type: "acceptOffer", offerId }).ok) {
+        if (!fromBot) g.act(m.id, { type: "chat", text: pick(YES) });
+      } else if (o.to === m.id && !fromBot) g.act(m.id, { type: "chat", text: pick(NO) });
+      broadcast(room);
+    });
+  }
+}
+
 function harvest(room) {
   const g = room.game;
   if (!g || g.phase !== "trade" || room.harvesting) return;
@@ -239,8 +263,10 @@ function handle(ws, msg) {
     case "act": {
       if (!room.game) return fail("The game hasn't started.");
       if (room.harvesting && (msg.a || {}).type !== "chat") return fail("The harvest is coming in. Wait a moment.");
+      const before = room.game.offers.length;
       const r = room.game.act(me.id, msg.a);
       if (!r.ok) fail(r.error);
+      else if ((msg.a || {}).type === "offer" && room.game.offers.length > before) botsConsider(room, room.game.offers[room.game.offers.length - 1].id);
       return maybeResolve(room);
     }
     case "forceNext": {
