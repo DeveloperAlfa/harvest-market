@@ -13,6 +13,7 @@ class Game {
     this.seed = seed >>> 0;
     this.rand = rng(this.seed);
     this.round = start;
+    this.startRound = start;
     this.pos = Object.fromEntries(CROPS.map(c => [c.id, 3]));
     this.deck = [];
     this.lastDrought = false;
@@ -23,6 +24,7 @@ class Game {
     this.phase = "trade";
     this.results = null;
     this._ids = 1;
+    this._seq = 0;          // order in which plots were planned, newest trimmed first
     const crops = shuffle(CROPS.map(c => c.id), this.rand).slice(0, players.length);
     this.players = players.map((p, i) => ({
       id: p.id, name: p.name, bot: !!p.bot, startCrop: crops[i], status: "farmer",
@@ -86,6 +88,7 @@ class Game {
           const gain = qty * (item === "water" ? pr.buyWater : pr.buyFert);
           p[item] -= qty; p.cash += gain;
           this.say("bank", `sold ${qty} ${item === "water" ? "water" : "fertilizer"} for ${gain}.`, p.id);
+          this._fit(p);
         }
         return null;
       }
@@ -106,7 +109,22 @@ class Game {
         const plot = p.plots.find(x => x.id === a.plotId);
         if (!plot) return "That plot is not yours.";
         if (!MODES.includes(a.mode)) return "Unknown plot use.";
+        if (a.mode === "plant" || a.mode === "fert") {
+          // Planting commits goods. Anything missing is bought from the Bank now, so a plan is never short.
+          const short = this.shortfall(p, plot, a.mode);
+          const cost = short.water * pr.water + short.fert * pr.fert;
+          if (cost > p.cash) {
+            const what = [short.water && `${short.water} water`, short.fert && `${short.fert} fertilizer`].filter(Boolean).join(" and ");
+            return `You need ${what} more (${cost} coins) and have ${p.cash}. Borrow or sell something first.`;
+          }
+          if (cost) {
+            p.cash -= cost; p.water += short.water; p.fert += short.fert;
+            this.say("bank", `bought ${[short.water && `${short.water} water`, short.fert && `${short.fert} fertilizer`].filter(Boolean).join(" and ")} for ${cost}.`, p.id);
+          }
+          plot.order = ++this._seq;
+        }
         plot.mode = a.mode;
+        this._fit(p);
         return null;
       }
 
@@ -169,6 +187,7 @@ class Game {
         if (pCash < 0) return "You can't cover the 1-coin deal fee.";
         this._transfer(q, p, o.give);
         this._transfer(p, q, o.get);
+        this._fit(p); this._fit(q);
         q.cash -= R.DEAL_FEE; p.cash -= R.DEAL_FEE;
         this.offers = this.offers.filter(x => x !== o);
         this.say("deal", `${p.name} accepted ${q.name}'s offer: ${this._describe(o, true)}`, p.id);
@@ -177,6 +196,33 @@ class Game {
 
       default: return "Unknown action.";
     }
+  }
+
+  // Goods a farmer still needs to plant `plot` as `mode`, counting what other planned plots already use.
+  committed(p, except) {
+    let water = 0, fert = 0;
+    for (const x of p.plots) if (x !== except && (x.mode === "plant" || x.mode === "fert")) {
+      water += CROP[x.crop].water; if (x.mode === "fert") fert += fertBags(x.crop);
+    }
+    return { water, fert };
+  }
+  shortfall(p, plot, mode) {
+    const c = this.committed(p, plot);
+    const needW = c.water + CROP[plot.crop].water, needF = c.fert + (mode === "fert" ? fertBags(plot.crop) : 0);
+    return { water: Math.max(0, needW - p.water), fert: Math.max(0, needF - p.fert) };
+  }
+  // If goods ran short (sold, traded away), the most recently planned fields fall back: fertilized -> planted -> empty.
+  _fit(p) {
+    const planned = p.plots.filter(x => x.mode === "plant" || x.mode === "fert").sort((a, b) => (a.order || 0) - (b.order || 0));
+    let water = p.water, fert = p.fert;
+    const dropped = [];
+    for (const x of planned) {
+      const w = CROP[x.crop].water, f = fertBags(x.crop);
+      if (x.mode === "fert" && (water < w || fert < f)) { x.mode = "plant"; dropped.push(x); }
+      if (water < w) { x.mode = "idle"; continue; }
+      water -= w; if (x.mode === "fert") fert -= f;
+    }
+    return dropped;
   }
 
   _bundle(b) {
@@ -301,7 +347,15 @@ class Game {
       }
       if (p.cash < 0 || p.plots.length === 0) this._goOut(p);
     }
-    // 6. boom, next round
+    // 6. fields are cleared for the new round; warehouses that still hold goods stay warehouses
+    for (const p of this.farmers()) {
+      let full = Math.ceil(p.fert / R.WAREHOUSE_FERT) + Math.ceil(p.water / R.WAREHOUSE_WATER);
+      for (const x of p.plots) {
+        if (x.mode === "ware" && full > 0) { full--; continue; }
+        x.mode = "idle"; delete x.order;
+      }
+    }
+    // 7. boom, next round
     const boom = this.farmers().some(p => p.cash >= R.BOOM_AT);
     this.offers = [];
     const lastLand = pr.land, lastBuyW = pr.buyWater, lastBuyF = pr.buyFert;

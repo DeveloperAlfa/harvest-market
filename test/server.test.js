@@ -4,6 +4,7 @@ const assert = require("node:assert");
 const WebSocket = require("ws");
 
 process.env.PORT = "18081";
+process.env.HM_FAST = "1";
 const { server } = require("../server");
 
 function client() {
@@ -66,6 +67,24 @@ test("two humans and a bot play a round over WebSockets", async () => {
   c.send({ t: "hello", token: a.token });
   await c.until(x => x.state && x.state.you === aid);
   a.ws.close(); b.ws.close(); c.ws.close();
+});
+
+test("bots think before moving, and the round timer brings the harvest in", async () => {
+  const a = client(); await a.open;
+  a.send({ t: "create", name: "Host" });
+  await a.until(x => x.state && x.state.room);
+  a.send({ t: "settings", turnSecs: 60 });
+  await a.until(x => x.state.room.turnSecs === 60);
+  a.send({ t: "addBot" });
+  await a.until(x => x.state.room.members.length === 2);
+  a.send({ t: "start" });
+  await a.until(x => x.state.game && x.state.clock);
+  assert.strictEqual(a.state.clock.thinking.length, 1, "the bot starts out thinking");
+  assert.ok(a.state.clock.deadlineIn > 0, "a countdown is running");
+  await a.until(x => x.state.clock.thinking.length === 0);
+  // the human never ends their turn: the timer does it
+  await a.until(x => x.state.game.round > 1 || x.state.game.phase === "ended", 4000);
+  a.ws.close();
 });
 
 test.after(() => { server.close(); setTimeout(() => process.exit(process.exitCode || 0), 50).unref(); });

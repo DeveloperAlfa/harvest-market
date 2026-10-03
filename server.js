@@ -13,6 +13,17 @@ const PUBLIC = path.join(__dirname, "public");
 const MAX_SEATS = 5;
 const ROOM_TTL_MS = 3 * 60 * 60 * 1000;
 const BOT_NAMES = ["Asha (bot)", "Bhima (bot)", "Chitra (bot)", "Dev (bot)", "Esha (bot)"];
+// Pacing. HM_FAST=1 (tests) shrinks every delay.
+const FAST = process.env.HM_FAST === "1";
+const T = {
+  botThink: FAST ? [5, 15] : [2000, 4500],    // before a bot's first move
+  botStep: FAST ? [2, 6] : [400, 900],        // between a bot's moves
+  harvest: FAST ? 20 : 2200,                  // "harvest is coming in" pause before results
+  second: FAST ? 5 : 1000,                    // length of a timer second
+};
+const TURN_CHOICES = [0, 60, 90, 120, 180];   // round timer options in seconds (0 = no timer)
+const DEFAULT_TURN = 120;
+const between = ([a, b]) => a + Math.floor(Math.random() * (b - a + 1));
 
 // ------------------------------------------------------------------ static files
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".json": "application/json" };
@@ -39,7 +50,11 @@ function newCode() {
   let c; do { c = Array.from({ length: 4 }, () => A[crypto.randomInt(A.length)]).join(""); } while (rooms.has(c));
   return c;
 }
-function makeRoom() { const room = { code: newCode(), host: null, members: [], game: null, touched: Date.now() }; rooms.set(room.code, room); return room; }
+function makeRoom() {
+  const room = { code: newCode(), host: null, members: [], game: null, touched: Date.now(),
+    turnSecs: DEFAULT_TURN, deadline: null, harvesting: false, thinking: new Set(), timers: [], paused: false };
+  rooms.set(room.code, room); return room;
+}
 function addMember(room, name, bot) {
   const m = { id: newId(), name: String(name || "").trim().slice(0, 24) || "Farmer", bot: !!bot, token: bot ? null : newId(), connected: !bot };
   room.members.push(m);
@@ -53,7 +68,10 @@ function roomView(room, youId) {
     t: "state",
     you: youId,
     room: { code: room.code, host: room.host, started: !!room.game,
-      members: room.members.map(m => ({ id: m.id, name: m.name, bot: m.bot, connected: m.connected })) },
+      members: room.members.map(m => ({ id: m.id, name: m.name, bot: m.bot, connected: m.connected })),
+      turnSecs: room.turnSecs },
+    clock: { total: room.roundMs || null, deadlineIn: room.deadline ? Math.max(0, room.deadline - Date.now()) : null,
+      harvesting: room.harvesting, thinking: [...room.thinking], paused: room.paused },
     game: room.game ? room.game.view() : null,
   };
 }
@@ -63,22 +81,76 @@ function broadcast(room) {
   for (const m of room.members) for (const ws of socketsByMember.get(m.id) || []) send(ws, roomView(room, m.id));
 }
 
-function runBots(room) {
-  const g = room.game; if (!g || g.phase !== "trade") return;
-  for (const m of room.members) if (m.bot) playBot(g, m.id);
+// ------------------------------------------------------------------ round flow
+// Each round: bots "think" and make their moves one by one, a timer runs (if set),
+// and when everyone is ready (or time is up) the harvest comes in after a short pause.
+function clearTimers(room) { room.timers.forEach(clearTimeout); room.timers = []; room.thinking.clear(); room.deadline = null; }
+const later = (room, ms, fn) => { const t = setTimeout(() => { try { fn(); } catch (e) { console.error(e); } }, ms); t.unref && t.unref(); room.timers.push(t); };
+const anyoneHere = room => room.members.some(m => !m.bot && m.connected);
+
+// Plan a bot's moves on a copy of the game, then replay them on the real game with pauses.
+function planBot(game, pid) {
+  const sim = Object.create(Object.getPrototypeOf(game));
+  for (const [k, v] of Object.entries(game)) sim[k] = typeof v === "function" ? () => 0.5 : structuredClone(v);
+  const moves = [], act = sim.act.bind(sim);
+  sim.act = (id, a) => { const r = act(id, a); if (r.ok) moves.push(a); return r; };
+  playBot(sim, pid);
+  // drop moves that change nothing on the real board (setting an empty plot to empty)
+  const p = game.player(pid);
+  return moves.filter(a => !(a.type === "setPlot" && (p.plots.find(x => x.id === a.plotId) || {}).mode === a.mode && a.mode === "idle"));
 }
-function humansReady(room) {
+
+function startRound(room) {
+  clearTimers(room);
+  const g = room.game; if (!g || g.phase !== "trade") return;
+  if (!anyoneHere(room)) { room.paused = true; return; }   // nobody watching: wait until someone is back
+  room.paused = false;
+  const round = g.round;
+  // round 1 gets an extra minute so new players can take the tour
+  if (room.turnSecs) { const ms = (room.turnSecs + (round === g.startRound ? 60 : 0)) * T.second; room.deadline = Date.now() + ms; room.roundMs = ms; later(room, ms, () => harvest(room)); }
+  for (const m of room.members) if (m.bot) {
+    const p = g.player(m.id); if (!p) continue;
+    room.thinking.add(m.id);
+    const moves = planBot(g, m.id);
+    let at = between(T.botThink);
+    moves.forEach(a => {
+      later(room, at, () => {
+        if (g.round !== round || room.harvesting) return;
+        if (a.type === "ready") room.thinking.delete(m.id);
+        g.act(m.id, a);
+        if (a.type === "ready") maybeResolve(room); else broadcast(room);
+      });
+      at += a.type === "ready" ? 0 : between(T.botStep);
+    });
+    if (!moves.some(a => a.type === "ready")) later(room, at, () => { room.thinking.delete(m.id); g.act(m.id, { type: "ready", value: true }); maybeResolve(room); });
+  }
+}
+function harvest(room) {
   const g = room.game;
-  return room.members.every(m => {
-    if (m.bot || !m.connected) return true;
+  if (!g || g.phase !== "trade" || room.harvesting) return;
+  clearTimers(room);
+  room.harvesting = true;
+  broadcast(room);
+  later(room, T.harvest, () => {
+    room.harvesting = false;
+    g.resolve();
+    startRound(room);
+    broadcast(room);
+  });
+}
+function everyoneReady(room) {
+  const g = room.game;
+  return room.thinking.size === 0 && room.members.every(m => {
     const p = g.player(m.id);
-    return !p || p.status !== "farmer" || p.ready;
+    if (!p || p.status !== "farmer") return true;
+    if (!m.bot && !m.connected) return true;
+    return p.ready;
   });
 }
 function maybeResolve(room) {
   const g = room.game;
-  if (!g || g.phase !== "trade") return;
-  if (humansReady(room)) { g.resolve(); runBots(room); }
+  if (!g || g.phase !== "trade" || room.harvesting) return broadcast(room);
+  if (everyoneReady(room)) harvest(room); else broadcast(room);
 }
 
 // ------------------------------------------------------------------ messages
@@ -121,7 +193,7 @@ function handle(ws, msg) {
         if (room.host === me.id) room.host = (room.members.find(x => !x.bot) || {}).id || null;
         if (!room.members.some(x => !x.bot)) rooms.delete(room.code);
         else broadcast(room);
-      } else { me.connected = false; maybeResolve(room); broadcast(room); }
+      } else { me.connected = false; maybeResolve(room); }
       return send(ws, { t: "welcome" });
     }
   }
@@ -136,6 +208,14 @@ function handle(ws, msg) {
       if (room.members.length >= MAX_SEATS) return fail("The table is full.");
       const used = new Set(room.members.map(x => x.name));
       addMember(room, BOT_NAMES.find(n => !used.has(n)) || "Bot", true);
+      return broadcast(room);
+    }
+    case "settings": {
+      if (!isHost) return fail("Only the host can change the timer.");
+      if (room.game) return fail("The game has started.");
+      const v = Number(msg.turnSecs);
+      if (!TURN_CHOICES.includes(v)) return fail("Pick one of the timer options.");
+      room.turnSecs = v;
       return broadcast(room);
     }
     case "removeMember": {
@@ -153,24 +233,24 @@ function handle(ws, msg) {
       if (room.members.length < 2) return fail("Add at least one more player or bot.");
       room.game = new Game({ seed: crypto.randomInt(2 ** 31), start: msg.start === 11 ? 11 : 1,
         players: room.members.map(m => ({ id: m.id, name: m.name, bot: m.bot })) });
-      runBots(room);
+      startRound(room);
       return broadcast(room);
     }
     case "act": {
       if (!room.game) return fail("The game hasn't started.");
+      if (room.harvesting && (msg.a || {}).type !== "chat") return fail("The harvest is coming in. Wait a moment.");
       const r = room.game.act(me.id, msg.a);
       if (!r.ok) fail(r.error);
-      maybeResolve(room);
-      return broadcast(room);
+      return maybeResolve(room);
     }
     case "forceNext": {
       if (!isHost) return fail("Only the host can move the game on.");
       if (!room.game || room.game.phase !== "trade") return;
-      room.game.resolve(); runBots(room);
-      return broadcast(room);
+      return harvest(room);
     }
     case "endGame": {
       if (!isHost || !room.game) return fail("Only the host can end the game.");
+      clearTimers(room); room.harvesting = false;
       room.game.forceEnd();
       return broadcast(room);
     }
@@ -184,6 +264,7 @@ function attach(ws, room, id) {
   if (!socketsByMember.has(id)) socketsByMember.set(id, new Set());
   socketsByMember.get(id).add(ws);
   const m = room.members.find(x => x.id === id); if (m) m.connected = true;
+  if (room.paused && room.game && room.game.phase === "trade") startRound(room);
 }
 function detach(ws) {
   if (!ws.member) return;
@@ -193,7 +274,7 @@ function detach(ws) {
   ws.room = null; ws.member = null;
   if (room && !socketsByMember.has(id)) {
     const m = room.members.find(x => x.id === id);
-    if (m) { m.connected = false; maybeResolve(room); broadcast(room); }
+    if (m) { m.connected = false; maybeResolve(room); }
   }
 }
 
@@ -216,6 +297,7 @@ const sweeper = setInterval(() => {
   const now = Date.now();
   for (const [code, room] of rooms) if (now - room.touched > ROOM_TTL_MS) {
     for (const m of room.members) if (m.token) sessions.delete(m.token);
+    clearTimers(room);
     rooms.delete(code);
   }
 }, 30000);

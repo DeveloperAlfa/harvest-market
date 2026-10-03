@@ -5,6 +5,9 @@ Play the Harvest Market card game with friends in the browser, phone or laptop. 
 - **One server** (Node.js) runs the rules, so nobody can cheat or miscount.
 - **Villages** are joined with a 4-letter code. 2–5 farmers per village, humans or bots.
 - **Live:** every action, deal and chat message reaches everyone instantly (WebSockets).
+- **Pacing:** a round timer (host picks 1–3 minutes or none; round 1 gets an extra minute), bots that take a few seconds to think and move one step at a time, and a short "harvest is coming in" pause followed by a harvest report.
+- **Plans reset:** fields are empty again after every harvest (stocked warehouses stay). Planting buys any missing water or fertilizer; if goods are later sold or traded away, the newest plans fall back to empty.
+- **First-time tour:** an 8-step guided tour on the first game; the ? button replays it.
 - **Rules:** the tabletop edition, as tuned with 1,000 simulated games: crop prices, fertilizer per barrel, dues that rise with the water price, Boom at 200.
 
 ## Run it on your laptop
@@ -45,7 +48,7 @@ The engine is the same one the AI benchmark will use. Bots and LLM agents plug i
 
 ## What's next (from the MMO plan)
 
-1. Turn timers and "autopilot" for players who go quiet.
+1. "Autopilot" for players who go quiet (the bot plays their turn).
 2. Accounts and ratings (Glicko/TrueSkill), then matchmaking with strangers.
 3. Saving games to a database so restarts don't end them.
 4. LLM-powered bot farmers that negotiate in chat.

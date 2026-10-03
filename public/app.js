@@ -10,6 +10,7 @@
   let ws, S = { you: null, room: null, game: null }, retry = 0;
   let openPlot = null, sellConfirm = false, chatOpen = false, seenLog = 0, lastPopRound = null, confirmEnd = false;
   const qty = { w: 1, f: 1 };
+  let deadlineAt = null;
   const draft = { give: { coins: 0, water: 0, fert: 0, iou: 0 }, get: { coins: 0, water: 0, fert: 0, iou: 0 } };
 
   // ------------------------------------------------------------- connection
@@ -20,7 +21,7 @@
       const m = JSON.parse(e.data);
       if (m.t === "token") store.set("hm-token", m.token);
       else if (m.t === "welcome") { S = { you: null, room: null, game: null }; if (m.note) $("welcomeNote").textContent = m.note; render(); }
-      else if (m.t === "state") { const prev = S; S = m; render(prev); }
+      else if (m.t === "state") { const prev = S; S = m; deadlineAt = m.clock && m.clock.deadlineIn != null ? Date.now() + m.clock.deadlineIn : null; render(prev); }
       else if (m.t === "error") toast(m.msg);
     };
     ws.onclose = () => { setTimeout(connect, Math.min(8000, 500 * 2 ** retry++)); };
@@ -107,11 +108,14 @@
     $("hostLobby").hidden = !host; $("waitHost").hidden = host;
     $("addBotBtn").disabled = S.room.members.length >= 5;
     $("startBtn").disabled = S.room.members.length < 2;
+    $("turnSel").value = String(S.room.turnSecs);
+    $("timerNote").textContent = S.room.turnSecs ? `Each round lasts up to ${fmtSecs(S.room.turnSecs)}; the harvest comes sooner if everyone is ready.` : "No round timer: the harvest waits until everyone is ready.";
     document.querySelectorAll("[data-remove]").forEach(b => b.onclick = () => send({ t: "removeMember", id: b.dataset.remove }));
   }
 
   function renderGame(prev) {
     show("game");
+    if (!tourOn && !store.get("hm-tour") && !renderGame.toured) { renderGame.toured = true; setTimeout(startTour, 400); }
     const g = G(), p = me(), pr = g.prices, d = dues(), dry = g.weather.drought;
     // sky
     $("sky").classList.toggle("dry", dry);
@@ -119,12 +123,7 @@
     $("roundNum").textContent = g.round;
     $("roundOf").textContent = `of ${g.rules.ROUNDS} · season ${pr.period}`;
     $("weatherWord").textContent = dry ? `Drought! Water costs ${pr.water}` : (g.lastDrought ? "The rains are back" : "Good weather");
-    const conn = id => (S.room.members.find(m => m.id === id) || {}).connected;
-    const waiting = g.players.filter(x => x.status === "farmer" && !x.bot && !x.ready && conn(x.id));
-    $("readyLine").textContent = waiting.length ? `Waiting for ${waiting.map(x => x.name).join(", ")}` : "Harvest coming…";
-    const rb = $("readyBtn");
-    rb.hidden = !p || p.status !== "farmer";
-    if (p) { rb.textContent = p.ready ? "Waiting… (undo)" : "End my turn"; rb.classList.toggle("on", p.ready); }
+    renderTurn();
 
     // farm
     if (p) {
@@ -143,12 +142,13 @@
       const owe = g.ious.filter(i => i.from === p.id).reduce((s, i) => s + i.amount, 0);
       $("barn").innerHTML = [["coin", p.cash, "coins"], ["water", p.water, "water"], ["fert", p.fert, "fertilizer"], ["loan", p.loans, owe ? `loans · IOUs ${owe}` : "bank loans"]]
         .map(([i, v, k]) => `<div class="res">${ICON[i]}<div><b>${v}</b><span>${k}</span></div></div>`).join("");
-      const needW = p.plots.filter(x => x.mode === "plant" || x.mode === "fert").reduce((s, x) => s + crop(x.crop).water, 0);
-      const needF = p.plots.filter(x => x.mode === "fert").reduce((s, x) => s + bags(x.crop), 0);
-      const warn = [];
-      if (needW > p.water) warn.push(`Planted fields need ${needW} water, you have ${p.water}.`);
-      if (needF > p.fert) warn.push(`Fertilized fields need ${needF} bags, you have ${p.fert}.`);
-      $("farmWarn").textContent = warn.length ? warn.join(" ") + " Buy more at the mandi, or those fields stay empty." : "";
+      const planW = p.plots.filter(x => x.mode === "plant" || x.mode === "fert").reduce((s, x) => s + crop(x.crop).water, 0);
+      const planF = p.plots.filter(x => x.mode === "fert").reduce((s, x) => s + bags(x.crop), 0);
+      const spareW = Math.max(0, p.water - planW), spareF = Math.max(0, p.fert - planF);
+      const room = W * 10, spare = Math.ceil(spareF / 10) + Math.ceil(spareW / 10);
+      $("farmWarn").textContent = p.status === "farmer" && (spareW || spareF) && spare > W
+        ? `${spareW ? spareW + " water" : ""}${spareW && spareF ? " and " : ""}${spareF ? spareF + " bags" : ""} won't be used for planting. Make a plot a warehouse to keep them, or they're sold back cheaply at the harvest.`
+        : "";
       document.querySelectorAll("[data-plot]").forEach(b => b.onclick = () => { openPlot = +b.dataset.plot; sellConfirm = false; renderSheet(); });
       // harvest pops
       if (g.lastHarvest && p.lastRound && lastPopRound !== g.lastHarvest.round && prev && prev.game && prev.game.round !== g.round) {
@@ -158,12 +158,14 @@
           if (el) el.insertAdjacentHTML("beforeend", `<span class="pop">+${amt}</span>`);
         }
       }
+      if (g.lastHarvest && prev && prev.game && prev.game.round !== g.round && p.lastRound && p.lastRound.round === prev.game.round) showReport(prev.game.round);
       if (g.lastHarvest) lastPopRound = g.lastHarvest.round;
     }
 
     // neighbours
     $("neighbours").innerHTML = g.players.filter(x => x.id !== S.you).map(x => {
-      const st = x.status !== "farmer" ? `<span class="st out">out</span>` : x.ready || x.bot ? `<span class="st ok">done</span>` : `<span class="st">thinking</span>`;
+      const thinking = S.clock && S.clock.thinking.includes(x.id);
+      const st = x.status !== "farmer" ? `<span class="st out">out</span>` : thinking ? `<span class="st think">thinking<i>.</i><i>.</i><i>.</i></span>` : x.ready ? `<span class="st ok">ready</span>` : `<span class="st">planning</span>`;
       return `<div class="nb"><div class="top"><span class="face" style="background:${faceOf(x.id)}">${esc(x.name[0])}</span><span class="nm">${esc(x.name)}</span>${st}</div>
         <div class="minis">${x.plots.map(pl => plotSvg(pl, { drought: dry })).join("") || '<span class="nums">no land</span>'}</div>
         <div class="nums">${x.cash} coins · ${x.water} water · ${x.fert} bags${x.loans ? ` · ${x.loans} loans` : ""}</div></div>`;
@@ -214,13 +216,26 @@
     $("sheetArt").innerHTML = plotSvg(x, { drought: g.weather.drought, water: x.mode === "ware" ? p.water : 0, fert: x.mode === "ware" ? p.fert : 0 });
     $("sheetTitle").textContent = `${c.name} plot`;
     $("sheetInfo").textContent = `Sack price now ${c.track[g.pos[c.id]] + pr.bonus}. You have ${p.water} water and ${p.fert} bags.`;
+    const cost = mode => {   // what choosing this would buy from the Bank
+      let w = 0, f = 0;
+      for (const y of p.plots) if (y !== x && (y.mode === "plant" || y.mode === "fert")) { w += crop(y.crop).water; if (y.mode === "fert") f += bags(y.crop); }
+      const sw = Math.max(0, w + c.water - p.water), sf = mode === "fert" ? Math.max(0, f + bags(c.id) - p.fert) : 0;
+      return { sw, sf, coins: sw * pr.water + sf * pr.fert };
+    };
+    const buyLine = (mode, base) => {
+      if (x.mode === mode) return base;
+      const k = cost(mode); if (!k.coins) return base;
+      const what = [k.sw && `${k.sw} water`, k.sf && `${k.sf} bags`].filter(Boolean).join(" + ");
+      return k.coins > p.cash ? `Needs ${what} for ${k.coins}; you have ${p.cash}. Borrow at the Bank first.` : `${base} · buys ${what} for ${k.coins}`;
+    };
     const opts = [
-      ["plant", "Plant", `Uses ${c.water} water · 1 sack`],
-      ["fert", "Plant + fertilize", `${c.water} water + ${bags(c.id)} bags · 2 sacks`],
+      ["plant", "Plant", buyLine("plant", `${c.water} water · 1 sack`)],
+      ["fert", "Plant + fertilize", buyLine("fert", `${c.water} water + ${bags(c.id)} bags · 2 sacks`)],
       ["ware", "Warehouse", `Keeps 10 water or 10 bags · dues ${d.ware}`],
       ["idle", "Leave empty", `Dues ${d.idle}`],
     ];
-    $("sheetChoices").innerHTML = opts.map(([m, t, s]) => `<button class="choice" aria-pressed="${x.mode === m}" data-mode="${m}"><b>${t}</b><span>${s}</span></button>`).join("");
+    const cant = m => (m === "plant" || m === "fert") && x.mode !== m && cost(m).coins > p.cash;
+    $("sheetChoices").innerHTML = opts.map(([m, t, s]) => `<button class="choice" aria-pressed="${x.mode === m}" data-mode="${m}" ${cant(m) ? "disabled" : ""}><b>${t}</b><span>${s}</span></button>`).join("");
     document.querySelectorAll("#sheetChoices [data-mode]").forEach(b => b.onclick = () => { act({ type: "setPlot", plotId: x.id, mode: b.dataset.mode }); openPlot = null; $("sheet").hidden = true; });
     $("sheetSell").innerHTML = sellConfirm
       ? `<div class="pair"><button class="btn" id="sellYes">Sell for ${pr.land} coins</button><button class="btn ghost" id="sellNo">Keep it</button></div>${p.plots.length === 1 ? `<p class="warn">This is your last plot. Without land you're out of the farm.</p>` : ""}`
@@ -270,6 +285,110 @@
     keep("wPlots", t ? t.plots : []);
   }
 
+  // ------------------------------------------------------------- turn bar: timer, who's ready, the ready button
+  const fmtSecs = n => n >= 60 ? `${Math.floor(n / 60)}:${String(n % 60).padStart(2, "0")}` : `0:${String(n).padStart(2, "0")}`;
+  function renderTurn() {
+    const g = G(), p = me(), ck = S.clock || { thinking: [] };
+    const conn = id => (S.room.members.find(m => m.id === id) || {}).connected;
+    const farmers = g.players.filter(x => x.status === "farmer" && (x.bot || conn(x.id)));
+    const ready = farmers.filter(x => x.ready && !ck.thinking.includes(x.id));
+    $("roll").innerHTML = farmers.map(x => {
+      const th = ck.thinking.includes(x.id), ok = x.ready && !th;
+      return `<span class="dot ${ok ? "ok" : th ? "th" : ""}" style="--c:${faceOf(x.id)}" title="${esc(x.name)}: ${ok ? "ready" : th ? "thinking" : "planning"}">${esc(x.name[0])}</span>`;
+    }).join("") + `<span class="cnt">${ready.length} of ${farmers.length} ready</span>`;
+    const waitingOn = farmers.filter(x => !x.ready && !x.bot).map(x => x.id === S.you ? "you" : x.name);
+    const thinking = farmers.filter(x => ck.thinking.includes(x.id)).map(x => x.name.replace(" (bot)", ""));
+    const bits = [];
+    if (ck.harvesting) bits.push("Harvest is coming in…");
+    else {
+      if (waitingOn.length) bits.push(`Waiting for ${waitingOn.join(", ")}`);
+      if (thinking.length) bits.push(`${thinking.join(", ")} ${thinking.length > 1 ? "are" : "is"} thinking`);
+      if (!bits.length) bits.push("Everyone's ready");
+    }
+    $("readyLine").textContent = bits.join(" · ");
+    const rb = $("readyBtn");
+    rb.hidden = !p || p.status !== "farmer";
+    rb.disabled = !!ck.harvesting;
+    if (p) {
+      $("readyLabel").textContent = p.ready ? "Ready ✓  Change plans" : "Ready for harvest";
+      rb.classList.toggle("on", !!p.ready);
+    }
+    $("curtain").hidden = !ck.harvesting;
+    tick();
+  }
+  function tick() {
+    const el = $("clock");
+    if (!S.game || deadlineAt == null || (S.clock && S.clock.harvesting)) { el.hidden = true; return; }
+    const total = (S.clock && S.clock.total) || (S.room.turnSecs || 1) * 1000, left = Math.max(0, deadlineAt - Date.now());
+    el.hidden = false;
+    $("clockText").textContent = fmtSecs(Math.ceil(left / 1000));
+    $("clockFill").style.strokeDashoffset = String(94.25 * (1 - left / total));
+    el.classList.toggle("low", left < 15000);
+  }
+  setInterval(tick, 250);
+
+  // ------------------------------------------------------------- harvest report
+  function showReport(round) {
+    const g = G(), p = me(), r = p.lastRound, h = g.lastHarvest;
+    if (!r || !h || tourOn) return;
+    const row = (label, v, cls = "") => `<div class="rrow ${cls}"><span>${label}</span><b>${v > 0 ? "+" : ""}${v}</b></div>`;
+    const lines = [];
+    const sackOf = pl => (pl.fert ? 2 : 1) * (h.bumper === pl.crop ? 3 : 1);
+    for (const pl of r.planted) lines.push(row(`${crop(pl.crop).name}: ${sackOf(pl)} sack${sackOf(pl) > 1 ? "s" : ""} × ${h.sack[pl.crop]}${h.bumper === pl.crop ? " (bumper!)" : ""}`, sackOf(pl) * h.sack[pl.crop], "up"));
+    if (!r.planted.length) lines.push(`<p class="hint">Nothing was planted this round.</p>`);
+    if (r.sold) lines.push(row("Unstored goods sold back", r.sold));
+    if (r.upkeep) lines.push(row("Dues and loan interest", -r.upkeep, "down"));
+    const net = r.earned + r.sold - r.upkeep;
+    $("reportTitle").textContent = `Round ${round} harvest`;
+    $("reportBody").innerHTML = `<p class="hint">${h.bumper ? `Bumper ${crop(h.bumper).name}! ` : ""}${h.mood ? esc(h.mood) + ". " : ""}Sacks: ${g.crops.map(c => `${c.name} ${h.sack[c.id]}`).join(", ")}.</p>
+      <div class="rlist">${lines.join("")}${row("This round", net, net >= 0 ? "net up" : "net down")}</div>
+      ${(r.notes || []).length ? `<p class="hint small">${esc(r.notes.join(". "))}.</p>` : ""}
+      <p class="hint small">Your fields are empty again. Warehouses holding goods stay as they are.</p>`;
+    $("reportClose").textContent = `Plan round ${g.round}`;
+    $("report").hidden = false;
+  }
+
+  // ------------------------------------------------------------- guided tour
+  const TOUR = [
+    { sel: "#plots", title: "Your farm", text: "Each plot grows one crop. Tap a plot to plant it. If you're short of water or fertilizer, planting buys what's missing from the mandi. Fields clear after every harvest, so plan them again each round." },
+    { sel: "#barn", title: "Your barn", text: "Coins, water, fertilizer and loans. Goods that aren't planted or kept in a warehouse plot are sold back cheaply at the harvest." },
+    { sel: ".stalls", title: "The mandi", text: "Buy or sell water and fertilizer, and borrow 20 coins from the Bank (2 coins interest a round). Prices rise every 5 rounds, and a drought makes water 4× dearer." },
+    { sel: ".board", title: "Sack prices", text: "What one sack of each crop sells for. A planted plot gives 1 sack, a fertilized one 2. Prices move at each harvest, and a bumper triples one crop." },
+    { sel: ".deals", title: "Deal board", text: "Pin offers to other farmers: coins, water, fertilizer, plots, or an IOU that's paid at the end of the season. Each side pays 1 coin when a deal goes through." },
+    { sel: "#chatFab", title: "Village chaupal", text: "Chat with everyone. Deals, weather and harvest news show up here too." },
+    { sel: ".turn-row", title: "Ready for harvest", text: "When your plans are set, tap Ready. The harvest comes when everyone is ready or the clock runs out. Bots take a few seconds to think." },
+    { sel: null, title: "How to win", text: "Keep farming to the end of the season with the most wealth. If you run out of coins and land you become a moneylender. Tap ? any time to see this again." },
+  ];
+  let tourOn = false, tourI = 0;
+  function startTour() { tourOn = true; tourI = 0; $("tour").hidden = false; showStep(); }
+  function endTour() { tourOn = false; $("tour").hidden = true; store.set("hm-tour", "done"); }
+  function showStep() {
+    const st = TOUR[tourI], el = st.sel && document.querySelector(st.sel);
+    $("tourStep").textContent = `${tourI + 1} of ${TOUR.length}`;
+    $("tourTitle").textContent = st.title; $("tourText").textContent = st.text;
+    $("tourNext").textContent = tourI === TOUR.length - 1 ? "Let's farm" : "Next";
+    $("tourSkip").hidden = tourI === TOUR.length - 1;
+    const spot = $("tourSpot"), tip = $("tourTip");
+    if (!el || !el.offsetParent && getComputedStyle(el).position !== "fixed") { spot.className = "spot none"; tip.className = "tip center"; tip.style.cssText = ""; return; }
+    const sticky = $("sky").offsetHeight;
+    if (!["#chatFab", ".turn-row"].includes(st.sel)) { const r0 = el.getBoundingClientRect(); window.scrollBy({ top: r0.top - sticky - 16, behavior: "instant" }); }
+    requestAnimationFrame(() => {
+      const r = el.getBoundingClientRect(), pad = 6, vw = innerWidth, vh = innerHeight;
+      spot.className = "spot";
+      Object.assign(spot.style, { left: r.left - pad + "px", top: r.top - pad + "px", width: r.width + pad * 2 + "px", height: Math.min(r.height, vh - r.top - 20) + pad * 2 + "px" });
+      tip.className = "tip";
+      const w = Math.min(340, vw - 32), left = Math.max(16, Math.min(vw - w - 16, r.left + r.width / 2 - w / 2));
+      const below = r.top + Math.min(r.height, vh * 0.45) + 16;
+      tip.style.width = w + "px"; tip.style.left = left + "px";
+      if (r.top < vh / 2 && below + 200 < vh) { tip.style.top = below + "px"; tip.style.bottom = ""; }
+      else { tip.style.top = ""; tip.style.bottom = Math.max(16, vh - r.top + 16) + "px"; }
+    });
+  }
+  $("tourNext").onclick = () => { if (++tourI >= TOUR.length) endTour(); else showStep(); };
+  $("tourSkip").onclick = endTour;
+  $("helpBtn").onclick = startTour;
+  addEventListener("resize", () => { if (tourOn) showStep(); });
+
   function renderResults() {
     show("results");
     $("resultList").innerHTML = G().results.map(r => `<div class="place ${r.rank === 1 ? "first" : ""}"><span class="rk">${r.rank}</span><div class="who"><b>${esc(r.name)}</b>${r.id === S.you ? " (you)" : ""}<small>${r.status === "farmer" ? "Still farming" : `Moneylender since round ${r.outRound}`}</small></div><span class="sc">${r.score}</span></div>`).join("");
@@ -280,6 +399,9 @@
   $("joinBtn").onclick = () => { const n = $("nameIn").value.trim(), c = $("codeIn").value.trim(); if (!n) return toast("Type your name first."); if (c.length !== 4) return toast("Village codes have 4 letters."); store.set("hm-name", n); send({ t: "join", name: n, code: c }); };
   $("codeIn").oninput = e => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z]/g, ""); };
   $("addBotBtn").onclick = () => send({ t: "addBot" });
+  $("turnSel").onchange = () => send({ t: "settings", turnSecs: +$("turnSel").value });
+  $("reportClose").onclick = () => { $("report").hidden = true; };
+  $("report").onclick = e => { if (e.target === $("report")) $("report").hidden = true; };
   $("startBtn").onclick = () => send({ t: "start", start: +$("lengthSel").value });
   const leave = () => { send({ t: "leave" }); store.del("hm-token"); };
   $("leaveLobby").onclick = leave; $("leaveGame").onclick = leave; $("backHome").onclick = leave;
@@ -306,7 +428,7 @@
   $("chatForm").onsubmit = e => { e.preventDefault(); const t = $("chatIn").value.trim(); if (t) { act({ type: "chat", text: t }); $("chatIn").value = ""; } };
   $("forceBtn").onclick = () => send({ t: "forceNext" });
   $("endBtn").onclick = () => { confirmEnd = true; render(); };
-  document.addEventListener("keydown", e => { if (e.key === "Escape") { $("sheet").hidden = true; openPlot = null; $("dealSheet").hidden = true; } });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") { if (tourOn) endTour(); $("report").hidden = true; $("sheet").hidden = true; openPlot = null; $("dealSheet").hidden = true; } });
 
   render();
   connect();
