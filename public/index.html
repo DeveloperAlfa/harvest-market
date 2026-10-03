@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Harvest Market</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- Welcome -->
+<section id="welcome" class="screen welcome" hidden>
+  <div class="hero-sky"><div class="sun"></div><div class="hill h1"></div><div class="hill h2"></div><div class="fields"></div></div>
+  <div class="welcome-card">
+    <h1 class="logo">Harvest Market</h1>
+    <p class="tag">Grow, trade and outlast your friends before the water runs dear.</p>
+    <label for="nameIn">Your name</label>
+    <input id="nameIn" maxlength="24" autocomplete="nickname" placeholder="e.g. Nipun">
+    <button class="btn big go" id="createBtn">Start a new village</button>
+    <div class="join"><input id="codeIn" maxlength="4" placeholder="CODE" aria-label="Village code" autocapitalize="characters"><button class="btn" id="joinBtn">Join</button></div>
+    <p class="err" id="welcomeNote"></p>
+  </div>
+</section>
+
+<!-- Lobby -->
+<section id="lobby" class="screen lobby" hidden>
+  <div class="signboard"><span>Village code</span><b id="lobbyCode">----</b></div>
+  <p class="hint">Share the code. Up to 5 farmers; fill empty seats with bots.</p>
+  <div class="gate" id="memberList"></div>
+  <div id="hostLobby" class="lobby-actions">
+    <button class="btn" id="addBotBtn">Add a bot farmer</button>
+    <label class="inline" for="lengthSel">Length <select id="lengthSel"><option value="1">Full · 35 rounds</option><option value="11">Short · 25 rounds</option></select></label>
+    <button class="btn big go" id="startBtn">Start the season</button>
+  </div>
+  <p class="hint" id="waitHost" hidden>Waiting for the host to start the season.</p>
+  <button class="btn ghost" id="leaveLobby">Leave village</button>
+</section>
+
+<!-- Game -->
+<section id="game" class="screen game" hidden>
+  <header class="sky" id="sky">
+    <div class="sky-art" id="skyArt"></div>
+    <div class="sky-row">
+      <div class="when"><b id="roundNum">1</b><span id="roundOf"></span></div>
+      <div class="weather-word" id="weatherWord"></div>
+      <button class="btn done" id="readyBtn">End my turn</button>
+    </div>
+    <div class="waiting" id="readyLine"></div>
+  </header>
+
+  <div class="layout">
+    <div class="col">
+      <section class="farm" aria-label="Your farm">
+        <div class="farm-head"><h2 id="farmTitle">Your farm</h2><span class="hint small" id="farmHint">Tap a plot to choose what to do with it.</span></div>
+        <div class="plots" id="plots"></div>
+        <div class="barn" id="barn"></div>
+        <p class="warn" id="farmWarn"></p>
+      </section>
+      <section class="village" aria-label="Neighbours">
+        <h2>The village</h2>
+        <div class="neighbours" id="neighbours"></div>
+      </section>
+    </div>
+
+    <div class="col">
+      <section class="mandi" aria-label="Market">
+        <h2>Mandi</h2>
+        <div class="stalls">
+          <div class="stall water"><div class="awning"></div><div class="stall-body">
+            <div class="stall-name">Water tank</div>
+            <div class="price-tag"><b id="pWater">2</b><span>a barrel</span></div>
+            <div class="sell-back">Buys back at <b id="pBuyWater">1</b></div>
+            <div class="qty"><button aria-label="Less water" data-q="w:-1">−</button><output id="qW">1</output><button aria-label="More water" data-q="w:1">+</button></div>
+            <div class="pair"><button class="btn" data-trade="bankBuy:water">Buy</button><button class="btn ghost" data-trade="bankSell:water">Sell</button></div>
+          </div></div>
+          <div class="stall fert"><div class="awning"></div><div class="stall-body">
+            <div class="stall-name">Fertilizer</div>
+            <div class="price-tag"><b id="pFert">4</b><span>a bag</span></div>
+            <div class="sell-back">Buys back at <b id="pBuyFert">3</b></div>
+            <div class="qty"><button aria-label="Fewer bags" data-q="f:-1">−</button><output id="qF">1</output><button aria-label="More bags" data-q="f:1">+</button></div>
+            <div class="pair"><button class="btn" data-trade="bankBuy:fert">Buy</button><button class="btn ghost" data-trade="bankSell:fert">Sell</button></div>
+          </div></div>
+          <div class="stall bank"><div class="awning"></div><div class="stall-body">
+            <div class="stall-name">Bank</div>
+            <div class="price-tag"><b>20</b><span>a loan</span></div>
+            <div class="sell-back">2 coins interest each round</div>
+            <div class="pair"><button class="btn" id="loanTake">Borrow</button><button class="btn ghost" id="loanRepay">Repay</button></div>
+            <div class="sell-back" id="pLand">Buys a plot for 8</div>
+          </div></div>
+        </div>
+        <div class="board" aria-label="Crop prices">
+          <div class="board-title">Today's sack prices</div>
+          <div id="cropBoard"></div>
+          <div class="board-foot" id="boardFoot"></div>
+        </div>
+      </section>
+
+      <section class="deals" aria-label="Deals between farmers">
+        <div class="deals-head"><h2>Deal board</h2><button class="btn" id="newDealBtn">Pin a deal</button></div>
+        <div class="corkboard" id="offerList"></div>
+        <div class="ious" id="iouList"></div>
+      </section>
+
+      <section class="host" id="hostGame" hidden>
+        <button class="btn ghost" id="forceBtn">Host: move to the next round now</button>
+        <button class="btn ghost" id="endBtn">Host: end the game</button>
+        <div id="endConfirm"></div>
+      </section>
+      <button class="btn ghost leave" id="leaveGame">Leave the village</button>
+    </div>
+  </div>
+
+  <!-- chat -->
+  <button class="chat-fab" id="chatFab" aria-label="Open chat"><span>Chat</span><i id="chatBadge" hidden></i></button>
+  <aside class="chat" id="chat" aria-label="Village chat" hidden>
+    <div class="chat-head"><b>Village chaupal</b><button class="x" id="chatClose" aria-label="Close chat">×</button></div>
+    <div class="chat-feed" id="feed"></div>
+    <form class="chat-form" id="chatForm"><input id="chatIn" maxlength="300" placeholder="Say something to everyone" aria-label="Message"><button class="btn">Send</button></form>
+  </aside>
+  <div class="bubble" id="bubble" hidden></div>
+</section>
+
+<!-- Results -->
+<section id="results" class="screen results" hidden>
+  <h1 class="logo">Season over</h1>
+  <div class="podium" id="resultList"></div>
+  <button class="btn big go" id="backHome">Back to the start</button>
+</section>
+
+<!-- plot action sheet -->
+<div class="sheet-wrap" id="sheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet-art" id="sheetArt"></div>
+    <h3 id="sheetTitle">Plot</h3>
+    <p class="hint" id="sheetInfo"></p>
+    <div class="choices" id="sheetChoices"></div>
+    <div id="sheetSell"></div>
+    <button class="btn ghost" id="sheetClose">Close</button>
+  </div>
+</div>
+
+<!-- deal composer -->
+<div class="sheet-wrap" id="dealSheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="dealTitle">
+    <h3 id="dealTitle">Pin a deal</h3>
+    <label class="inline" for="offerTo">For <select id="offerTo"></select></label>
+    <div class="swap">
+      <div class="side"><b>You give</b><div id="giveRows"></div><div class="checks" id="gPlots"></div></div>
+      <div class="side"><b>You get</b><div id="getRows"></div><div class="checks" id="wPlots"></div></div>
+    </div>
+    <p class="hint small">Each side pays 1 coin when the deal is accepted. An IOU is paid by its writer at the end of the season, unless they go broke.</p>
+    <div class="pair"><button class="btn big go" id="offerBtn">Pin it</button><button class="btn ghost" id="dealClose">Cancel</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<script src="/app.js"></script>
+</body>
+</html>
