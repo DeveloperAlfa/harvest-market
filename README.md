@@ -7,6 +7,8 @@ Play the Harvest Market card game with friends in the browser, phone or laptop. 
 - **Live:** every action, deal and chat message reaches everyone instantly (WebSockets).
 - **Pacing:** a round timer (host picks 1–3 minutes or none; round 1 gets an extra minute), bots that take a few seconds to think and move one step at a time, and a short "harvest is coming in" pause followed by a harvest report.
 - **A turn in three steps:** plan your fields (plant, warehouse or leave empty), then buy the water they need, then choose which to fertilize. Fields are empty again after every harvest (stocked warehouses stay). A field with no water stays empty; one short of fertilizer is planted unfertilized.
+- **Round maths:** the turn panel always shows what you're spending (water, fertilizer, dues), the expected return at today's sack prices, and the net. Each field choice shows its own cost, return and gain over leaving it empty.
+- **Autopilot:** "Ready, and repeat this plan every round" replays your field plan each round, buying the water and fertilizer it needs. It stops by itself when a drought starts or coins run short.
 - **Tabs:** Farm (plots, barn, sack prices), Mandi (water, fertilizer, Bank), Deals (offer board, with a badge when something waits for you) and Village (neighbours, "Offer a deal"). A bottom tab bar on phones.
 - **Bots that trade:** they sell spare plots (to farmers first, the Bank if they must), bid on good plots when rich, offer coins for IOUs as Moneylenders, and answer offers within a few seconds, with a word in chat.
 - **First-time tour:** a 10-step guided tour on the first game; the ? button replays it.

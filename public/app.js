@@ -11,7 +11,9 @@
   let openPlot = null, sellConfirm = false, chatOpen = false, seenLog = 0, lastPopRound = null, confirmEnd = false;
   const qty = { w: 1, f: 1 };
   let deadlineAt = null, tab = "farm";
-  let step = 1, stepRound = null, wq = 0, fq = 0;   // the turn: 1 plan fields, 2 water, 3 fertilizer
+  let step = 1, stepRound = null, wq = 0, fq = 0;
+  // Autopilot: repeat a saved field plan every round, buying what it needs, until a drought or money runs short.
+  let auto = null, autoRound = null;   // the turn: 1 plan fields, 2 water, 3 fertilizer
   function goTab(t) {
     tab = t;
     document.querySelectorAll("[data-pane]").forEach(el => { el.hidden = el.dataset.pane !== t; });
@@ -134,6 +136,7 @@
     $("roundOf").textContent = `of ${g.rounds || g.rules.ROUNDS} · season ${pr.period}`;
     $("weatherWord").textContent = dry ? `Drought! Water costs ${pr.water}` : (g.lastDrought ? "The rains are back" : "Good weather");
     renderTurn();
+    if (auto) setTimeout(runAuto, 0);
 
     // farm
     if (p) {
@@ -235,7 +238,8 @@
     $("sheetInfo").textContent = "What should this field do this round?";
     const planted = x.mode === "plant" || x.mode === "fert";
     const opts = [
-      ["plant", "Plant", `Grows 1 sack · sells for ${c.track[g.pos[c.id]] + pr.bonus} now`],
+      ["plant", "Plant", (() => { const cost = c.water * pr.water, sack = c.track[g.pos[c.id]] + pr.bonus, net = sack - cost + d.idle;
+        return `Costs ${cost} in water · returns ${sack} · ${net >= 0 ? "+" : ""}${net} vs leaving it empty`; })()],
       ["ware", "Warehouse", `Keeps up to 10 water or 10 bags for later rounds · dues ${d.ware}`],
       ["idle", "Leave empty", `Dues ${d.idle}`],
     ];
@@ -309,6 +313,7 @@
       if (thinking.length) bits.push(`${thinking.join(", ")} ${thinking.length > 1 ? "are" : "is"} thinking`);
       if (!bits.length) bits.push("Everyone's ready");
     }
+    if (auto) bits.push("Autopilot on");
     $("readyLine").textContent = bits.join(" · ");
     const rb = $("readyBtn");
     rb.hidden = !p || p.status !== "farmer";
@@ -337,6 +342,46 @@
   const plantedPlots = p => p.plots.filter(x => x.mode === "plant" || x.mode === "fert");
   const needWater = p => plantedPlots(p).reduce((s, x) => s + crop(x.crop).water, 0);
   const needBags = p => p.plots.filter(x => x.mode === "fert").reduce((s, x) => s + bags(x.crop), 0);
+  const sackNow = c => c.track[G().pos[c.id]] + G().prices.bonus;
+  function roundMath(p) {
+    const pr = G().prices, d = dues();
+    const water = needWater(p) * pr.water, fert = needBags(p) * pr.fert;
+    const due = p.plots.filter(x => x.mode === "idle").length * d.idle + p.plots.filter(x => x.mode === "ware").length * d.ware + p.loans * G().rules.LOAN_INTEREST;
+    const ret = plantedPlots(p).reduce((s, x) => s + (x.mode === "fert" ? 2 : 1) * sackNow(crop(x.crop)), 0);
+    return { water, fert, due, spend: water + fert + due, ret, net: ret - water - fert - due };
+  }
+  function mathHtml(p) {
+    const m = roundMath(p), parts = [];
+    if (m.water) parts.push(`water ${m.water}`); if (m.fert) parts.push(`fertilizer ${m.fert}`); if (m.due) parts.push(`dues ${m.due}`);
+    return `<div class="math"><div><span>You're spending</span><b>${m.spend}</b><small>${parts.join(" + ") || "nothing"}</small></div>
+      <div><span>Expected return</span><b>${m.ret}</b><small>at today's sack prices</small></div>
+      <div class="${m.net >= 0 ? "up" : "down"}"><span>Net</span><b>${m.net >= 0 ? "+" : ""}${m.net}</b><small>${m.net >= 0 ? "profit" : "loss"} if prices hold</small></div></div>`;
+  }
+  // ---- autopilot
+  function startAuto() {
+    const p = me(); if (!p) return;
+    auto = { plan: Object.fromEntries(p.plots.map(x => [x.id, x.mode])) };
+    autoRound = G().round;   // this round is already planned by hand
+    if (!p.ready) act({ type: "ready", value: true });
+    toast("Autopilot on: your plan repeats every round until a drought.");
+  }
+  function stopAuto(why) { if (!auto) return; auto = null; if (why) toast(why); if (S.game) setTimeout(render, 0); }
+  function runAuto() {
+    const g = G(), p = me(), pr = g.prices;
+    if (!auto || !p || p.status !== "farmer" || g.phase !== "trade" || (S.clock && S.clock.harvesting) || autoRound === g.round || p.ready) return;
+    autoRound = g.round;
+    if (g.weather.drought) { stopAuto(); setTimeout(() => toast("Drought! Autopilot stopped. Plan this round yourself."), 50); step = 1; return; }
+    const modes = p.plots.map(x => ({ x, mode: auto.plan[x.id] || "idle" }));
+    const cost = list => { let w = 0, f = 0; for (const { x, mode } of list) if (mode === "plant" || mode === "fert") { w += crop(x.crop).water; if (mode === "fert") f += bags(x.crop); }
+      return { w: Math.max(0, w - p.water), f: Math.max(0, f - p.fert), coins: Math.max(0, w - p.water) * pr.water + Math.max(0, f - p.fert) * pr.fert }; };
+    let need = cost(modes);
+    if (need.coins > p.cash) { modes.forEach(m => { if (m.mode === "fert") m.mode = "plant"; }); need = cost(modes); }
+    if (need.coins > p.cash) { stopAuto(); setTimeout(() => toast(`Autopilot stopped: repeating your plan needs ${need.coins} coins and you have ${p.cash}.`), 50); step = 1; return; }
+    for (const { x, mode } of modes) if (x.mode !== mode) act({ type: "setPlot", plotId: x.id, mode });
+    if (need.w) act({ type: "bankBuy", item: "water", qty: need.w });
+    if (need.f) act({ type: "bankBuy", item: "fert", qty: need.f });
+    act({ type: "ready", value: true });
+  }
   function setStep(n) {
     step = n;
     const p = me();
@@ -351,12 +396,15 @@
     document.querySelectorAll("#steps li").forEach(li => { const n = +li.dataset.step; li.className = n === step && !p.ready ? "now" : n < step || p.ready ? "done" : ""; });
     if (!farmer) { panel.innerHTML = ""; return; }
     if (p.ready) {
-      panel.innerHTML = `<div class="sp ready-box"><b>You're ready for the harvest.</b><span>Waiting for the others. You can still trade on the Deals tab.</span>
-        <button class="btn ghost" data-sp="unready">Change plans</button></div>`;
+      panel.innerHTML = `<div class="sp ready-box"><b>${auto ? "Autopilot is on." : "You're ready for the harvest."}</b>
+        <span>${auto ? "Your plan repeats every round, buying the water and fertilizer it needs. It stops by itself in a drought or when coins run short." : "Waiting for the others. You can still trade on the Deals tab."}</span>
+        ${mathHtml(p)}
+        <div class="pair">${auto ? `<button class="btn" data-sp="autoOff">Stop autopilot</button>` : `<button class="btn ghost" data-sp="autoOn">⟳ Repeat this plan every round</button>`}<button class="btn ghost" data-sp="unready">Change plans</button></div></div>`;
     } else if (step === 1) {
       const n = plantedPlots(p).length, w = p.plots.filter(x => x.mode === "ware").length, e = p.plots.length - n - w;
       panel.innerHTML = `<div class="sp"><b>① Plan your fields</b><span>Tap each field and choose Plant, Warehouse or Leave empty.</span>
         <span class="tally">${n} to plant · ${w} warehouse${w === 1 ? "" : "s"} · ${e} empty</span>
+        ${mathHtml(p)}
         <div class="nav"><span></span><button class="btn go" data-sp="next">Next: water →</button></div></div>`;
     } else if (step === 2) {
       const need = needWater(p), have = p.water, short = Math.max(0, need - have), extra = Math.max(0, have - need);
@@ -370,10 +418,11 @@
         ${short && short * pr.water > p.cash ? `<span class="warn">That needs ${short * pr.water} coins and you have ${p.cash}.</span><button class="btn ghost" data-sp="loan">Borrow 20 from the Bank</button>` : ""}
         ${short && wq < short ? `<span class="hint small">Without ${short} more, ${short === need ? "your fields" : "some fields"} stay empty this round.</span>` : ""}
         ${extra ? `<span class="hint small">${extra} spare barrels: a warehouse keeps up to 10 for later, otherwise they're sold back at ${pr.buyWater} each at the harvest.</span><button class="btn ghost" data-sp="sellW">Sell 1 spare for ${pr.buyWater}</button>` : ""}
+        ${mathHtml(p)}
         <div class="nav"><button class="btn ghost" data-sp="back">← Fields</button><button class="btn go" data-sp="next">Next: fertilizer →</button></div></div>`;
     } else {
       const rows = plantedPlots(p).map(x => { const c = crop(x.crop), on = x.mode === "fert";
-        return `<button class="frow" aria-pressed="${on}" data-fert="${x.id}"><span>${c.name}</span><span>${on ? "Fertilized ✓" : "Fertilize?"} · ${bags(c.id)} bags · +1 sack</span></button>`; }).join("");
+        return `<button class="frow" aria-pressed="${on}" data-fert="${x.id}"><span>${c.name}</span><span>${on ? "Fertilized ✓" : "Fertilize?"} · ${bags(c.id)} bags for ${bags(c.id) * pr.fert} · +1 sack worth ${sackNow(c)}</span></button>`; }).join("");
       const need = needBags(p), have = p.fert, cost = fq * pr.fert;
       panel.innerHTML = `<div class="sp"><b>③ Fertilizer</b>
         ${rows ? `<span>Fertilizer doubles a field's sacks. Each field takes one bag per barrel of water it uses. A bag costs ${pr.fert}.</span><div class="frows">${rows}</div>
@@ -382,7 +431,9 @@
           <button class="btn" data-sp="buyF" ${fq ? "" : "disabled"}>Buy ${fq} for ${cost}</button></div>
         ${need > have && fq < need - have ? `<span class="hint small">Short of bags, a field is still planted, just not fertilized.</span>` : ""}`
         : `<span>Nothing is planted this round, so there's nothing to fertilize.</span>`}
-        <div class="nav"><button class="btn ghost" data-sp="back">← Water</button><button class="btn go" data-sp="ready">Ready for harvest ✓</button></div></div>`;
+        ${mathHtml(p)}
+        <div class="nav"><button class="btn ghost" data-sp="back">← Water</button><button class="btn go" data-sp="ready">Ready for harvest ✓</button></div>
+        <button class="btn ghost" data-sp="readyAuto">⟳ Ready, and repeat this plan every round</button></div>`;
     }
     panel.querySelectorAll("[data-sp]").forEach(b => b.onclick = () => {
       const k = b.dataset.sp;
@@ -395,7 +446,9 @@
       else if (k === "sellW") act({ type: "bankSell", item: "water", qty: 1 });
       else if (k === "loan") act({ type: "takeLoan" });
       else if (k === "ready") act({ type: "ready", value: true });
-      else if (k === "unready") { act({ type: "ready", value: false }); setStep(1); }
+      else if (k === "unready") { stopAuto(); act({ type: "ready", value: false }); setStep(1); }
+      else if (k === "readyAuto" || k === "autoOn") startAuto();
+      else if (k === "autoOff") { stopAuto("Autopilot off."); renderSteps(); }
     });
     panel.querySelectorAll("[data-fert]").forEach(b => b.onclick = () => {
       const x = p.plots.find(y => y.id === +b.dataset.fert);
@@ -411,6 +464,7 @@
   function showReport(round) {
     const g = G(), p = me(), r = p.lastRound, h = g.lastHarvest;
     if (!r || !h || tourOn) return;
+    if (auto) { const net = r.earned + r.sold - r.upkeep; toast(`Round ${round}: ${net >= 0 ? "+" : ""}${net} coins. Autopilot carries on.`); return; }
     const row = (label, v, cls = "") => `<div class="rrow ${cls}"><span>${label}</span><b>${v > 0 ? "+" : ""}${v}</b></div>`;
     const lines = [];
     const sackOf = pl => (pl.fert ? 2 : 1) * (h.bumper === pl.crop ? 3 : 1);
@@ -491,7 +545,7 @@
   $("startBtn").onclick = () => send({ t: "start", rounds: +$("lengthSel").value });
   const leave = () => { send({ t: "leave" }); store.del("hm-token"); };
   $("leaveLobby").onclick = leave; $("leaveGame").onclick = leave; $("backHome").onclick = leave;
-  $("readyBtn").onclick = () => { const p = me(); if (p) { act({ type: "ready", value: !p.ready }); if (p.ready) step = 1; } };
+  $("readyBtn").onclick = () => { const p = me(); if (p) { act({ type: "ready", value: !p.ready }); if (p.ready) { step = 1; stopAuto(); } } };
   document.querySelectorAll("[data-q]").forEach(b => b.onclick = () => { const [k, d] = b.dataset.q.split(":"); qty[k] = Math.max(1, Math.min(50, qty[k] + +d)); $("qW").textContent = qty.w; $("qF").textContent = qty.f; });
   document.querySelectorAll("[data-trade]").forEach(b => b.onclick = () => { const [type, item] = b.dataset.trade.split(":"); act({ type, item, qty: item === "water" ? qty.w : qty.f }); });
   $("loanTake").onclick = () => act({ type: "takeLoan" });

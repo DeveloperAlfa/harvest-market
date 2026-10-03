@@ -301,3 +301,12 @@ input, select { font: inherit; color: var(--ink); background: var(--white); bord
 .ready-box { background: #DDF3D2; }
 .ready-box span { color: var(--ink-soft); font-weight: 700; }
 .ready-box .btn { justify-self: start; }
+
+/* -------------------------------------------------- round maths */
+.math { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.math > div { background: #F4EEDD; border: 2px solid var(--ink); border-radius: 10px; padding: 6px 8px; display: grid; gap: 0; min-width: 0; }
+.math span { font-size: 12px; font-weight: 800; color: var(--ink-soft); }
+.math b { font-size: 24px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.math small { font-size: 11px; font-weight: 700; color: var(--ink-soft); line-height: 1.15; }
+.math .up { background: #DDF3D2; } .math .up b { color: var(--leaf); }
+.math .down { background: #FBE0D8; } .math .down b { color: var(--brick); }
