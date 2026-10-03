@@ -69,9 +69,14 @@
     <div class="pane farm-pane" data-pane="farm">
       <section class="farm" aria-label="Your farm">
         <div class="farm-head"><h2 id="farmTitle">Your farm</h2><span class="hint small" id="farmHint">Tap a plot to choose what to do with it.</span></div>
+        <ol class="steps" id="steps" aria-label="Your turn">
+          <li data-step="1"><button>Plan fields</button></li>
+          <li data-step="2"><button>Water</button></li>
+          <li data-step="3"><button>Fertilizer</button></li>
+        </ol>
         <div class="plots" id="plots"></div>
+        <div class="step-panel" id="stepPanel"></div>
         <div class="barn" id="barn"></div>
-        <p class="warn" id="farmWarn"></p>
       </section>
       <div class="board" aria-label="Crop prices">
         <div class="board-title">Today's sack prices</div>

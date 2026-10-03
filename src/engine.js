@@ -88,7 +88,6 @@ class Game {
           const gain = qty * (item === "water" ? pr.buyWater : pr.buyFert);
           p[item] -= qty; p.cash += gain;
           this.say("bank", `sold ${qty} ${item === "water" ? "water" : "fertilizer"} for ${gain}.`, p.id);
-          this._fit(p);
         }
         return null;
       }
@@ -109,22 +108,7 @@ class Game {
         const plot = p.plots.find(x => x.id === a.plotId);
         if (!plot) return "That plot is not yours.";
         if (!MODES.includes(a.mode)) return "Unknown plot use.";
-        if (a.mode === "plant" || a.mode === "fert") {
-          // Planting commits goods. Anything missing is bought from the Bank now, so a plan is never short.
-          const short = this.shortfall(p, plot, a.mode);
-          const cost = short.water * pr.water + short.fert * pr.fert;
-          if (cost > p.cash) {
-            const what = [short.water && `${short.water} water`, short.fert && `${short.fert} fertilizer`].filter(Boolean).join(" and ");
-            return `You need ${what} more (${cost} coins) and have ${p.cash}. Borrow or sell something first.`;
-          }
-          if (cost) {
-            p.cash -= cost; p.water += short.water; p.fert += short.fert;
-            this.say("bank", `bought ${[short.water && `${short.water} water`, short.fert && `${short.fert} fertilizer`].filter(Boolean).join(" and ")} for ${cost}.`, p.id);
-          }
-          plot.order = ++this._seq;
-        }
         plot.mode = a.mode;
-        this._fit(p);
         return null;
       }
 
@@ -187,7 +171,6 @@ class Game {
         if (pCash < 0) return "You can't cover the 1-coin deal fee.";
         this._transfer(q, p, o.give);
         this._transfer(p, q, o.get);
-        this._fit(p); this._fit(q);
         q.cash -= R.DEAL_FEE; p.cash -= R.DEAL_FEE;
         this.offers = this.offers.filter(x => x !== o);
         this.say("deal", `${p.name} accepted ${q.name}'s offer: ${this._describe(o, true)}`, p.id);
@@ -196,33 +179,6 @@ class Game {
 
       default: return "Unknown action.";
     }
-  }
-
-  // Goods a farmer still needs to plant `plot` as `mode`, counting what other planned plots already use.
-  committed(p, except) {
-    let water = 0, fert = 0;
-    for (const x of p.plots) if (x !== except && (x.mode === "plant" || x.mode === "fert")) {
-      water += CROP[x.crop].water; if (x.mode === "fert") fert += fertBags(x.crop);
-    }
-    return { water, fert };
-  }
-  shortfall(p, plot, mode) {
-    const c = this.committed(p, plot);
-    const needW = c.water + CROP[plot.crop].water, needF = c.fert + (mode === "fert" ? fertBags(plot.crop) : 0);
-    return { water: Math.max(0, needW - p.water), fert: Math.max(0, needF - p.fert) };
-  }
-  // If goods ran short (sold, traded away), the most recently planned fields fall back: fertilized -> planted -> empty.
-  _fit(p) {
-    const planned = p.plots.filter(x => x.mode === "plant" || x.mode === "fert").sort((a, b) => (a.order || 0) - (b.order || 0));
-    let water = p.water, fert = p.fert;
-    const dropped = [];
-    for (const x of planned) {
-      const w = CROP[x.crop].water, f = fertBags(x.crop);
-      if (x.mode === "fert" && (water < w || fert < f)) { x.mode = "plant"; dropped.push(x); }
-      if (water < w) { x.mode = "idle"; continue; }
-      water -= w; if (x.mode === "fert") fert -= f;
-    }
-    return dropped;
   }
 
   _bundle(b) {
@@ -288,12 +244,15 @@ class Game {
         if (plot.mode !== "plant" && plot.mode !== "fert") continue;
         const need = CROP[plot.crop].water, fert = plot.mode === "fert";
         const bags = fertBags(plot.crop);
-        if (p.water >= need && (!fert || p.fert >= bags)) {
-          p.water -= need; if (fert) p.fert -= bags;
-          r.planted.push({ plot: plot.id, crop: plot.crop, fert });
+        if (p.water >= need) {
+          p.water -= need;
+          const fed = fert && p.fert >= bags;
+          if (fed) p.fert -= bags; else if (fert) r.unfed = (r.unfed || 0) + 1;
+          r.planted.push({ plot: plot.id, crop: plot.crop, fert: fed });
         } else r.failed++;
       }
-      if (r.failed) r.notes.push(`${r.failed} plot(s) lacked water or fertilizer and stayed idle`);
+      if (r.failed) r.notes.push(`${r.failed} field(s) had no water and stayed empty`);
+      if (r.unfed) r.notes.push(`${r.unfed} field(s) were planted without fertilizer (not enough bags)`);
     }
     // 2. harvest
     if (!this.deck.length) this.deck = harvestDeck(this.rand);

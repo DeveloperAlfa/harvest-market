@@ -12,12 +12,14 @@ function expectedSack(game, cropId) {
   return c.track[x] + game.prices.bonus;
 }
 
+const idleDues = game => (R.UPKEEP_SCALES ? game.prices.waterNormal : R.IDLE_UPKEEP);
+
 // ------------------------------------------------------------------ valuations
 const HORIZON = 6;   // rounds of farming a bot counts when valuing a plot
 function plantProfit(game, cropId) {
   const pr = game.prices, c = CROP[cropId], sack = expectedSack(game, cropId), bags = fertBags(cropId);
   const fert = sack * 1.2 > bags * pr.fert;
-  return sack * 1.2 * (fert ? 2 : 1) - (fert ? bags * pr.fert : 0) - c.water * pr.waterNormal;
+  return sack * 1.2 * (fert ? 2 : 1) - (fert ? bags * pr.fert : 0) - c.water * pr.waterNormal + idleDues(game);
 }
 function plotValue(game, cropId) {
   const pr = game.prices, left = Math.max(1, R.ROUNDS - game.round);
@@ -57,7 +59,7 @@ function landMoves(game, pid) {
     if (p.cash >= 15) game.act(pid, { type: "offer", to: null, give: { coins: 15 }, get: { iou: 20 } });
     return;
   }
-  const dues = p.plots.length * (pr.waterNormal + 1) + p.loans * R.LOAN_INTEREST;
+  const dues = p.plots.length * (idleDues(game) + 1) + p.loans * R.LOAN_INTEREST;
   const worst = [...p.plots].sort((a, b) => plantProfit(game, a.crop) - plantProfit(game, b.crop))[0];
   // Short of cash: sell the least useful plot, to another farmer at a premium if possible, else the Bank.
   if (p.plots.length > 1 && p.cash < dues + 4 && p.loans >= p.plots.length) {
@@ -96,10 +98,10 @@ function playBot(game, pid) {
     const bags = fertBags(plot.crop);
     const fert = sack * 1.2 > bags * pr.fert;     // fertilizer pays on average (bumper chance included)
     const gain = sack * 1.2 * (fert ? 2 : 1) - (fert ? bags * pr.fert : 0);
-    return { plot, need, bags, fert, profit: gain - waterCost + R.IDLE_UPKEEP };
+    return { plot, need, bags, fert, profit: gain - waterCost + idleDues(game) };   // planting also saves the empty-field dues
   }).sort((a, b) => b.profit - a.profit);
 
-  const reserve = p.plots.length * R.WAREHOUSE_UPKEEP + p.loans * R.LOAN_INTEREST;
+  const reserve = p.plots.length * idleDues(game) + p.loans * R.LOAN_INTEREST;
   let water = p.water, fert = p.fert;       // goods not yet committed to a plot
   const chosen = [];
   for (const pl of plans) {

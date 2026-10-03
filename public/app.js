@@ -11,6 +11,7 @@
   let openPlot = null, sellConfirm = false, chatOpen = false, seenLog = 0, lastPopRound = null, confirmEnd = false;
   const qty = { w: 1, f: 1 };
   let deadlineAt = null, tab = "farm";
+  let step = 1, stepRound = null, wq = 0, fq = 0;   // the turn: 1 plan fields, 2 water, 3 fertilizer
   function goTab(t) {
     tab = t;
     document.querySelectorAll("[data-pane]").forEach(el => { el.hidden = el.dataset.pane !== t; });
@@ -133,7 +134,8 @@
     // farm
     if (p) {
       $("farmTitle").textContent = p.status === "farmer" ? `${p.name}'s farm` : `${p.name}, moneylender`;
-      $("farmHint").textContent = p.status === "farmer" ? "Tap a plot to plant it, store goods in it, or sell it." : "You lost your land. You can still lend coins for IOUs on the deal board.";
+      $("farmHint").textContent = p.status === "farmer" ? "" : "You lost your land. You can still lend coins for IOUs on the deal board.";
+      if (stepRound !== g.round) { stepRound = g.round; step = 1; }
       const W = p.plots.filter(x => x.mode === "ware").length;
       let fertLeft = p.fert, waterLeft = p.water;
       $("plots").innerHTML = p.plots.map(x => {
@@ -142,18 +144,14 @@
         if (plan === "ware") { const f = Math.min(fertLeft, 10); fertLeft -= f; const w2 = f ? 0 : Math.min(waterLeft, 10); waterLeft -= w2; ws = { water: w2, fert: f }; }
         const label = { idle: "Empty", plant: "Planted", fert: "Planted + fert", ware: "Warehouse" }[plan];
         return `<button class="plot" data-plot="${x.id}" aria-label="${c.name} plot, ${label}">${plotSvg(x, { drought: dry, ...ws })}
-          <span class="flag">${label}</span><span class="cap">${c.name}<small>${plan === "ware" ? `dues ${d.ware}` : plan === "idle" ? `dues ${d.idle}` : `${c.water} water${plan === "fert" ? ` + ${bags(c.id)} bags` : ""}`}</small></span></button>`;
+          <span class="flag">${label}</span><span class="cap">${c.name}<small>${plan === "ware" ? `dues ${d.ware}` : plan === "idle" ? `dues ${d.idle}` : `sack ${c.track[g.pos[c.id]] + pr.bonus}`}</small></span></button>`;
       }).join("") || `<p class="hint">No land left.</p>`;
       const owe = g.ious.filter(i => i.from === p.id).reduce((s, i) => s + i.amount, 0);
-      $("barn").innerHTML = [["coin", p.cash, "coins"], ["water", p.water, "water"], ["fert", p.fert, "fertilizer"], ["loan", p.loans, owe ? `loans · IOUs ${owe}` : "bank loans"]]
-        .map(([i, v, k]) => `<div class="res">${ICON[i]}<div><b>${v}</b><span>${k}</span></div></div>`).join("");
-      const planW = p.plots.filter(x => x.mode === "plant" || x.mode === "fert").reduce((s, x) => s + crop(x.crop).water, 0);
-      const planF = p.plots.filter(x => x.mode === "fert").reduce((s, x) => s + bags(x.crop), 0);
-      const spareW = Math.max(0, p.water - planW), spareF = Math.max(0, p.fert - planF);
-      const room = W * 10, spare = Math.ceil(spareF / 10) + Math.ceil(spareW / 10);
-      $("farmWarn").textContent = p.status === "farmer" && (spareW || spareF) && spare > W
-        ? `${spareW ? spareW + " water" : ""}${spareW && spareF ? " and " : ""}${spareF ? spareF + " bags" : ""} won't be used for planting. Make a plot a warehouse to keep them, or they're sold back cheaply at the harvest.`
-        : "";
+      const res = [["coin", p.cash, "coins"], ["water", p.water, "water"], ["fert", p.fert, "fertilizer"], ["loan", p.loans, owe ? `loans · IOUs ${owe}` : "bank loans"]]
+        .filter(([i]) => step > 1 || p.ready || (i !== "water" && i !== "fert"));   // water and fertilizer come in after the fields are planned
+      $("barn").innerHTML = res.map(([i, v, k]) => `<div class="res">${ICON[i]}<div><b>${v}</b><span>${k}</span></div></div>`).join("");
+      $("barn").style.gridTemplateColumns = `repeat(${res.length}, minmax(0, 1fr))`;
+      renderSteps();
       document.querySelectorAll("[data-plot]").forEach(b => b.onclick = () => { openPlot = +b.dataset.plot; sellConfirm = false; renderSheet(); });
       // harvest pops
       if (g.lastHarvest && p.lastRound && lastPopRound !== g.lastHarvest.round && prev && prev.game && prev.game.round !== g.round) {
@@ -230,28 +228,15 @@
     $("sheet").hidden = false;
     $("sheetArt").innerHTML = plotSvg(x, { drought: g.weather.drought, water: x.mode === "ware" ? p.water : 0, fert: x.mode === "ware" ? p.fert : 0 });
     $("sheetTitle").textContent = `${c.name} plot`;
-    $("sheetInfo").textContent = `Sack price now ${c.track[g.pos[c.id]] + pr.bonus}. You have ${p.water} water and ${p.fert} bags.`;
-    const cost = mode => {   // what choosing this would buy from the Bank
-      let w = 0, f = 0;
-      for (const y of p.plots) if (y !== x && (y.mode === "plant" || y.mode === "fert")) { w += crop(y.crop).water; if (y.mode === "fert") f += bags(y.crop); }
-      const sw = Math.max(0, w + c.water - p.water), sf = mode === "fert" ? Math.max(0, f + bags(c.id) - p.fert) : 0;
-      return { sw, sf, coins: sw * pr.water + sf * pr.fert };
-    };
-    const buyLine = (mode, base) => {
-      if (x.mode === mode) return base;
-      const k = cost(mode); if (!k.coins) return base;
-      const what = [k.sw && `${k.sw} water`, k.sf && `${k.sf} bags`].filter(Boolean).join(" + ");
-      return k.coins > p.cash ? `Needs ${what} for ${k.coins}; you have ${p.cash}. Borrow at the Bank first.` : `${base} · buys ${what} for ${k.coins}`;
-    };
+    $("sheetInfo").textContent = "What should this field do this round?";
+    const planted = x.mode === "plant" || x.mode === "fert";
     const opts = [
-      ["plant", "Plant", buyLine("plant", `${c.water} water · 1 sack`)],
-      ["fert", "Plant + fertilize", buyLine("fert", `${c.water} water + ${bags(c.id)} bags · 2 sacks`)],
-      ["ware", "Warehouse", `Keeps 10 water or 10 bags · dues ${d.ware}`],
+      ["plant", "Plant", `Grows 1 sack · sells for ${c.track[g.pos[c.id]] + pr.bonus} now`],
+      ["ware", "Warehouse", `Keeps up to 10 water or 10 bags for later rounds · dues ${d.ware}`],
       ["idle", "Leave empty", `Dues ${d.idle}`],
     ];
-    const cant = m => (m === "plant" || m === "fert") && x.mode !== m && cost(m).coins > p.cash;
-    $("sheetChoices").innerHTML = opts.map(([m, t, s]) => `<button class="choice" aria-pressed="${x.mode === m}" data-mode="${m}" ${cant(m) ? "disabled" : ""}><b>${t}</b><span>${s}</span></button>`).join("");
-    document.querySelectorAll("#sheetChoices [data-mode]").forEach(b => b.onclick = () => { act({ type: "setPlot", plotId: x.id, mode: b.dataset.mode }); openPlot = null; $("sheet").hidden = true; });
+    $("sheetChoices").innerHTML = opts.map(([m, t, s]) => `<button class="choice" aria-pressed="${m === "plant" ? planted : x.mode === m}" data-mode="${m}"><b>${t}</b><span>${s}</span></button>`).join("");
+    document.querySelectorAll("#sheetChoices [data-mode]").forEach(b => b.onclick = () => { if (!(b.dataset.mode === "plant" && planted)) act({ type: "setPlot", plotId: x.id, mode: b.dataset.mode }); openPlot = null; $("sheet").hidden = true; });
     $("sheetSell").innerHTML = sellConfirm
       ? `<div class="pair"><button class="btn" id="sellYes">Sell for ${pr.land} coins</button><button class="btn ghost" id="sellNo">Keep it</button></div>${p.plots.length === 1 ? `<p class="warn">This is your last plot. Without land you're out of the farm.</p>` : ""}`
       : `<button class="btn ghost" id="sellAsk">Sell this plot to the Bank</button>`;
@@ -344,6 +329,80 @@
   // the tab bar sticks just under the sky header on wide screens
   new ResizeObserver(() => document.documentElement.style.setProperty("--sky-h", $("sky").offsetHeight + "px")).observe($("sky"));
 
+  // ------------------------------------------------------------- the turn: plan fields, then water, then fertilizer
+  const plantedPlots = p => p.plots.filter(x => x.mode === "plant" || x.mode === "fert");
+  const needWater = p => plantedPlots(p).reduce((s, x) => s + crop(x.crop).water, 0);
+  const needBags = p => p.plots.filter(x => x.mode === "fert").reduce((s, x) => s + bags(x.crop), 0);
+  function setStep(n) {
+    step = n;
+    const p = me();
+    if (p && n === 2) wq = Math.max(0, needWater(p) - p.water);
+    if (p && n === 3) fq = Math.max(0, needBags(p) - p.fert);
+    if (S.game) render();
+  }
+  function renderSteps() {
+    const g = G(), p = me(), pr = g.prices, panel = $("stepPanel");
+    const farmer = p && p.status === "farmer";
+    $("steps").hidden = !farmer;
+    document.querySelectorAll("#steps li").forEach(li => { const n = +li.dataset.step; li.className = n === step && !p.ready ? "now" : n < step || p.ready ? "done" : ""; });
+    if (!farmer) { panel.innerHTML = ""; return; }
+    if (p.ready) {
+      panel.innerHTML = `<div class="sp ready-box"><b>You're ready for the harvest.</b><span>Waiting for the others. You can still trade on the Deals tab.</span>
+        <button class="btn ghost" data-sp="unready">Change plans</button></div>`;
+    } else if (step === 1) {
+      const n = plantedPlots(p).length, w = p.plots.filter(x => x.mode === "ware").length, e = p.plots.length - n - w;
+      panel.innerHTML = `<div class="sp"><b>① Plan your fields</b><span>Tap each field and choose Plant, Warehouse or Leave empty.</span>
+        <span class="tally">${n} to plant · ${w} warehouse${w === 1 ? "" : "s"} · ${e} empty</span>
+        <div class="nav"><span></span><button class="btn go" data-sp="next">Next: water →</button></div></div>`;
+    } else if (step === 2) {
+      const need = needWater(p), have = p.water, short = Math.max(0, need - have), extra = Math.max(0, have - need);
+      const list = plantedPlots(p).map(x => `${crop(x.crop).name} ${crop(x.crop).water}`).join(" + ");
+      const cost = wq * pr.water;
+      panel.innerHTML = `<div class="sp"><b>② Water</b>
+        <span>${need ? `Your planted fields need <b>${need} barrels</b> (${list}).` : "Nothing is planted, so no water is needed for planting."} You have <b>${have}</b>.</span>
+        ${g.weather.drought ? `<span class="warn">Drought: water costs ${pr.water} a barrel this round.</span>` : ""}
+        <div class="buyrow"><div class="qty"><button data-sp="w-">−</button><output>${wq}</output><button data-sp="w+">+</button></div>
+          <button class="btn" data-sp="buyW" ${wq ? "" : "disabled"}>Buy ${wq} for ${cost}</button></div>
+        ${short && short * pr.water > p.cash ? `<span class="warn">That needs ${short * pr.water} coins and you have ${p.cash}.</span><button class="btn ghost" data-sp="loan">Borrow 20 from the Bank</button>` : ""}
+        ${short && wq < short ? `<span class="hint small">Without ${short} more, ${short === need ? "your fields" : "some fields"} stay empty this round.</span>` : ""}
+        ${extra ? `<span class="hint small">${extra} spare barrels: a warehouse keeps up to 10 for later, otherwise they're sold back at ${pr.buyWater} each at the harvest.</span><button class="btn ghost" data-sp="sellW">Sell 1 spare for ${pr.buyWater}</button>` : ""}
+        <div class="nav"><button class="btn ghost" data-sp="back">← Fields</button><button class="btn go" data-sp="next">Next: fertilizer →</button></div></div>`;
+    } else {
+      const rows = plantedPlots(p).map(x => { const c = crop(x.crop), on = x.mode === "fert";
+        return `<button class="frow" aria-pressed="${on}" data-fert="${x.id}"><span>${c.name}</span><span>${on ? "Fertilized ✓" : "Fertilize?"} · ${bags(c.id)} bags · +1 sack</span></button>`; }).join("");
+      const need = needBags(p), have = p.fert, cost = fq * pr.fert;
+      panel.innerHTML = `<div class="sp"><b>③ Fertilizer</b>
+        ${rows ? `<span>Fertilizer doubles a field's sacks. Each field takes one bag per barrel of water it uses. A bag costs ${pr.fert}.</span><div class="frows">${rows}</div>
+        <span>${need ? `Fertilized fields need <b>${need} bags</b>. You have <b>${have}</b>.` : "No field is fertilized."}</span>
+        <div class="buyrow"><div class="qty"><button data-sp="f-">−</button><output>${fq}</output><button data-sp="f+">+</button></div>
+          <button class="btn" data-sp="buyF" ${fq ? "" : "disabled"}>Buy ${fq} for ${cost}</button></div>
+        ${need > have && fq < need - have ? `<span class="hint small">Short of bags, a field is still planted, just not fertilized.</span>` : ""}`
+        : `<span>Nothing is planted this round, so there's nothing to fertilize.</span>`}
+        <div class="nav"><button class="btn ghost" data-sp="back">← Water</button><button class="btn go" data-sp="ready">Ready for harvest ✓</button></div></div>`;
+    }
+    panel.querySelectorAll("[data-sp]").forEach(b => b.onclick = () => {
+      const k = b.dataset.sp;
+      if (k === "next") setStep(step + 1);
+      else if (k === "back") setStep(step - 1);
+      else if (k === "w-" || k === "w+") { wq = Math.max(0, wq + (k === "w+" ? 1 : -1)); renderSteps(); }
+      else if (k === "f-" || k === "f+") { fq = Math.max(0, fq + (k === "f+" ? 1 : -1)); renderSteps(); }
+      else if (k === "buyW") { act({ type: "bankBuy", item: "water", qty: wq }); wq = 0; }
+      else if (k === "buyF") { act({ type: "bankBuy", item: "fert", qty: fq }); fq = 0; }
+      else if (k === "sellW") act({ type: "bankSell", item: "water", qty: 1 });
+      else if (k === "loan") act({ type: "takeLoan" });
+      else if (k === "ready") act({ type: "ready", value: true });
+      else if (k === "unready") { act({ type: "ready", value: false }); setStep(1); }
+    });
+    panel.querySelectorAll("[data-fert]").forEach(b => b.onclick = () => {
+      const x = p.plots.find(y => y.id === +b.dataset.fert);
+      act({ type: "setPlot", plotId: x.id, mode: x.mode === "fert" ? "plant" : "fert" });
+      // keep the buy amount in step with the plan
+      const delta = bags(x.crop) * (x.mode === "fert" ? -1 : 1);
+      fq = Math.max(0, Math.max(0, needBags(p) + delta - p.fert));
+    });
+  }
+  document.querySelectorAll("#steps [data-step] button").forEach(b => b.onclick = () => { const p = me(); if (p && !p.ready) setStep(+b.parentElement.dataset.step); });
+
   // ------------------------------------------------------------- harvest report
   function showReport(round) {
     const g = G(), p = me(), r = p.lastRound, h = g.lastHarvest;
@@ -367,8 +426,9 @@
 
   // ------------------------------------------------------------- guided tour
   const TOUR = [
-    { tab: "farm", sel: "#plots", title: "Your farm", text: "Each plot grows one crop. Tap a plot to plant it. If you're short of water or fertilizer, planting buys what's missing. Fields clear after every harvest, so plan them again each round." },
-    { tab: "farm", sel: "#barn", title: "Your barn", text: "Coins, water, fertilizer and loans. Goods that aren't planted or kept in a warehouse plot are sold back cheaply at the harvest." },
+    { tab: "farm", sel: "#plots", title: "Your farm", text: "Each plot grows one crop. Every round goes in three steps: plan your fields (plant, warehouse or leave empty), then buy the water they need, then choose which to fertilize. Fields clear after every harvest." },
+    { tab: "farm", sel: "#steps", title: "Your turn, step by step", text: "Plan fields → Water → Fertilizer. The panel below the fields tells you exactly how much you need and what it costs." },
+    { tab: "farm", sel: "#barn", title: "Your barn", text: "Coins and loans. Water and fertilizer show up here from the water step. Goods that aren't planted or kept in a warehouse are sold back cheaply at the harvest." },
     { tab: "farm", sel: ".board", title: "Sack prices", text: "What one sack of each crop sells for. A planted plot gives 1 sack, a fertilized one 2. Prices move at each harvest, and a bumper triples one crop." },
     { tab: "mandi", sel: ".stalls", title: "The mandi", text: "Buy or sell water and fertilizer, borrow 20 coins from the Bank (2 a round interest), or sell it a plot. Prices rise every 5 rounds; a drought makes water 4× dearer." },
     { tab: "deals", sel: ".corkboard", title: "Deal board", text: "Offers between farmers: coins, water, fertilizer, plots, or IOUs paid at the end. Bots bid for land and sell spare plots here, and answer your offers in a few seconds." },
@@ -427,7 +487,7 @@
   $("startBtn").onclick = () => send({ t: "start", start: +$("lengthSel").value });
   const leave = () => { send({ t: "leave" }); store.del("hm-token"); };
   $("leaveLobby").onclick = leave; $("leaveGame").onclick = leave; $("backHome").onclick = leave;
-  $("readyBtn").onclick = () => { const p = me(); if (p) act({ type: "ready", value: !p.ready }); };
+  $("readyBtn").onclick = () => { const p = me(); if (p) { act({ type: "ready", value: !p.ready }); if (p.ready) step = 1; } };
   document.querySelectorAll("[data-q]").forEach(b => b.onclick = () => { const [k, d] = b.dataset.q.split(":"); qty[k] = Math.max(1, Math.min(50, qty[k] + +d)); $("qW").textContent = qty.w; $("qF").textContent = qty.f; });
   document.querySelectorAll("[data-trade]").forEach(b => b.onclick = () => { const [type, item] = b.dataset.trade.split(":"); act({ type, item, qty: item === "water" ? qty.w : qty.f }); });
   $("loanTake").onclick = () => act({ type: "takeLoan" });

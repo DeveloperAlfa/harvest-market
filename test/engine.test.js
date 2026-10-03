@@ -65,47 +65,42 @@ test("planting, harvest payout and upkeep", () => {
   assert.strictEqual(p.cash, before + lr.earned - lr.upkeep);
 });
 
-test("selling planned water empties the field; leftovers without warehouse are sold", () => {
+test("a planned field without water stays empty; leftovers without warehouse are sold", () => {
   const g = mk(2); g.weather = { die: 4, drought: false };
   const p = g.players[0];
-  g.act("p0", { type: "setPlot", plotId: p.plots[0].id, mode: "plant" });   // buys the water it needs
-  assert.strictEqual(p.plots[0].mode, "plant");
-  assert.ok(p.water > 0);
-  g.act("p0", { type: "bankSell", item: "water", qty: 1 });                  // now short
-  assert.strictEqual(p.plots[0].mode, "idle", "a short field falls back to empty");
+  g.act("p0", { type: "setPlot", plotId: p.plots[0].id, mode: "plant" });   // no water bought
   g.act("p0", { type: "bankBuy", item: "fert", qty: 1 });                    // no warehouse to keep it
   g.resolve();
+  assert.strictEqual(p.lastRound.failed, 1);
   assert.strictEqual(p.lastRound.planted.length, 0);
   assert.strictEqual(p.fert, 0);
-  assert.strictEqual(p.water, 0);
   assert.strictEqual(p.lastRound.upkeep, 3 * 2);
 });
 
-test("planting buys what is missing, or refuses when coins are short", () => {
+test("planning a field buys nothing", () => {
   const g = mk(2); g.weather = { die: 4, drought: false };
   const p = g.players[0], c0 = p.cash;
-  const r = g.act("p0", { type: "setPlot", plotId: p.plots[0].id, mode: "fert" });
-  assert.ok(r.ok);
-  assert.ok(p.cash < c0 && p.water > 0 && p.fert > 0);
-  p.cash = 0;
-  const r2 = g.act("p0", { type: "setPlot", plotId: p.plots[1].id, mode: "plant" });
-  assert.ok(!r2.ok && /need/.test(r2.error));
-  assert.strictEqual(p.plots[1].mode, "idle");
+  assert.ok(g.act("p0", { type: "setPlot", plotId: p.plots[0].id, mode: "fert" }).ok);
+  assert.strictEqual(p.cash, c0); assert.strictEqual(p.water, 0); assert.strictEqual(p.fert, 0);
+  assert.strictEqual(p.plots[0].mode, "fert");
 });
 
-test("the newest plans fall back first when goods are traded away", () => {
+test("short of fertilizer, the field is still planted, just not fertilized", () => {
   const g = mk(2); g.weather = { die: 4, drought: false };
-  const p = g.players[0]; p.cash = 500;
+  const p = g.players[0]; p.cash = 200;
+  const need = g.view().crops.find(c => c.id === p.plots[0].crop).water;
+  g.act("p0", { type: "bankBuy", item: "water", qty: need });
   g.act("p0", { type: "setPlot", plotId: p.plots[0].id, mode: "fert" });
-  g.act("p0", { type: "setPlot", plotId: p.plots[1].id, mode: "fert" });
-  g.act("p0", { type: "bankSell", item: "fert", qty: 1 });
-  assert.strictEqual(p.plots[0].mode, "fert");
-  assert.strictEqual(p.plots[1].mode, "plant", "fertilizer short: newest field keeps its water but loses fertilizer");
+  g.resolve();
+  assert.strictEqual(p.lastRound.planted.length, 1);
+  assert.strictEqual(p.lastRound.planted[0].fert, false);
 });
 
 test("fields are empty again after the harvest; stocked warehouses stay", () => {
   const g = mk(2); g.weather = { die: 4, drought: false };
   const p = g.players[0]; p.cash = 500;
+  const need = g.view().crops.find(c => c.id === p.plots[0].crop).water;
+  g.act("p0", { type: "bankBuy", item: "water", qty: need });
   g.act("p0", { type: "setPlot", plotId: p.plots[0].id, mode: "plant" });
   g.act("p0", { type: "setPlot", plotId: p.plots[1].id, mode: "ware" });
   g.act("p0", { type: "setPlot", plotId: p.plots[2].id, mode: "ware" });

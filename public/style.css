@@ -278,3 +278,26 @@ input, select { font: inherit; color: var(--ink); background: var(--white); bord
   .bubble { bottom: calc(136px + env(safe-area-inset-bottom, 0px)); }
 }
 
+
+/* -------------------------------------------------- the turn: plan, water, fertilizer */
+.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; counter-reset: st; }
+.steps li { counter-increment: st; }
+.steps button { width: 100%; border: 2px solid var(--ink); border-radius: 999px; background: rgba(255,253,246,.55); color: var(--ink-soft); font-weight: 800; font-size: 14px; padding: 4px 6px; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.steps button::before { content: counter(st); width: 20px; height: 20px; border-radius: 50%; border: 2px solid currentColor; display: grid; place-items: center; font-size: 12px; flex: none; }
+.steps li.now button { background: var(--sign); color: var(--ink); box-shadow: 0 2px 0 var(--ink); }
+.steps li.done button { background: var(--white); color: var(--leaf); }
+.steps li.done button::before { content: "✓"; }
+.sp { background: var(--white); border: 2px solid var(--ink); border-radius: 14px; padding: 10px 12px; display: grid; gap: 8px; }
+.sp > b { font-size: 19px; }
+.sp .tally { font-weight: 800; color: var(--teal); }
+.sp .warn { min-height: 0; }
+.sp .nav { display: flex; justify-content: space-between; gap: 8px; margin-top: 2px; }
+.buyrow { display: grid; grid-template-columns: 130px 1fr; gap: 8px; align-items: center; }
+.buyrow .qty output { font-size: 20px; }
+.frows { display: grid; gap: 6px; }
+.frow { display: flex; justify-content: space-between; gap: 8px; border: 2px solid var(--ink); border-radius: 10px; background: var(--white); padding: 8px 10px; font-weight: 700; text-align: left; }
+.frow span:first-child { font-weight: 800; }
+.frow[aria-pressed="true"] { background: #DDEFC0; }
+.ready-box { background: #DDF3D2; }
+.ready-box span { color: var(--ink-soft); font-weight: 700; }
+.ready-box .btn { justify-self: start; }
